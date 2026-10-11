@@ -67,10 +67,13 @@ pub async fn run(source: QrSource) -> CliResult {
     Ok(())
 }
 
-/// 识别图片里的所有二维码，返回它们的文本。
+/// 识别图片里的所有二维码，返回它们的文本。图片先转成灰度，再交给 rxing。
 fn decode_image(path: &Path) -> Result<Vec<String>, Box<dyn Error>> {
-    let path_str = path.to_str().ok_or("图片路径里有无法识别的字符")?;
-    let results = rxing::helpers::detect_multiple_in_file(path_str)
+    let luma = image::open(path)
+        .map_err(|e| format!("读取图片 {} 失败：{e}", path.display()))?
+        .into_luma8();
+    let (width, height) = luma.dimensions();
+    let results = rxing::helpers::detect_multiple_in_luma(luma.into_raw(), width, height)
         .map_err(|e| format!("图片里没有识别出二维码：{e}"))?;
     Ok(results.iter().map(|r| r.getText().to_owned()).collect())
 }
@@ -120,5 +123,29 @@ mod tests {
     #[test]
     fn missing_image_file_is_an_error() {
         assert!(decode_image(Path::new("不存在的图片.png")).is_err());
+    }
+
+    /// 画一张真实的二维码 PNG，确认“读图片 → 转灰度 → 识别”整条路能走通。
+    #[test]
+    fn decodes_qr_from_png() {
+        let code = qrcode::QrCode::new(VALID.as_bytes()).unwrap();
+        let colors = code.to_colors();
+        let modules = code.width() as u32;
+        // 每个模块画成 4×4 像素，四周留 4 个模块宽的白边。
+        let (scale, quiet) = (4, 4);
+        let size = (modules + 2 * quiet) * scale;
+        let img = image::GrayImage::from_fn(size, size, |x, y| {
+            let (mx, my) = (x / scale, y / scale);
+            let inside =
+                (quiet..quiet + modules).contains(&mx) && (quiet..quiet + modules).contains(&my);
+            let dark = inside
+                && colors[((my - quiet) * modules + (mx - quiet)) as usize] == qrcode::Color::Dark;
+            image::Luma([if dark { 0 } else { 255 }])
+        });
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("qr.png");
+        img.save(&path).unwrap();
+
+        assert_eq!(decode_image(&path).unwrap(), vec![VALID.to_owned()]);
     }
 }

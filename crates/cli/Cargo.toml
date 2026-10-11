@@ -12,7 +12,11 @@ mhy-carry-api.workspace = true
 mhy-carry-core.workspace = true
 mhy-carry-platform.workspace = true
 clap.workspace = true
+image.workspace = true
 jiff.workspace = true
 qrcode.workspace = true
 rxing.workspace = true
 tokio.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
