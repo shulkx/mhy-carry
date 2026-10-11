@@ -1,0 +1,12 @@
+[package]
+name = "capture-bench"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[features]
+wgc = ["xcap/wgc"]
+
+[dependencies]
+cpu-time = "1"
+xcap = "0.9.8"
