@@ -287,3 +287,30 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod proptests {
+    use super::*;
+    use proptest::prelude::*;
+
+    const NOW: i64 = 1_760_000_000;
+
+    proptest! {
+        #[test]
+        fn never_panics_on_any_input(text in ".*") {
+            let _ = parse_login_qr(&text, NOW);
+        }
+
+        #[test]
+        fn any_change_to_the_host_is_rejected(
+            prefix in "[a-z0-9.\\-]{0,10}",
+            suffix in "[a-z0-9.\\-]{0,10}",
+        ) {
+            prop_assume!(!(prefix.is_empty() && suffix.is_empty()));
+            let text = format!(
+                "https://{prefix}user.mihoyo.com{suffix}/qr_code_in_game.html?app_id=4&biz_key=hk4e_cn&expire=4102444800&ticket=66cf3afb2a1c7a308832bd56"
+            );
+            prop_assert!(parse_login_qr(&text, NOW).is_err());
+        }
+    }
+}
