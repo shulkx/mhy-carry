@@ -2,6 +2,7 @@
 //! 这里不访问网络，也不调用操作系统 API。
 #![forbid(unsafe_code)]
 
+pub mod account;
 pub mod fsutil;
 pub mod games;
 pub mod qr;
