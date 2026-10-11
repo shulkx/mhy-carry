@@ -6,4 +6,5 @@ pub mod account;
 pub mod fsutil;
 pub mod games;
 pub mod qr;
+pub mod settings;
 pub mod store;
