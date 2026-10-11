@@ -1,14 +1,14 @@
 # MhyCarry 设计文档（v1）
 
 - 日期：2026-10-11
-- 状态：待审阅
+- 状态：已确认；同日按接口核对结果修订了第 6、9、10、14 节
 - v1 范围：Windows，原神国服官服，一个账号
 
 ## 1. 背景与目标
 
 MhyCarry 识别屏幕上的米哈游游戏登录二维码，用你绑定的账号确认登录，扫码前不用掏出手机。常见用法是让朋友或主播帮你打难关：对方的游戏客户端显示登录二维码，你在自己电脑上用 MhyCarry 扫码，把账号登录到对方那里。
 
-同类工具 MHY_Scanner 的 Release 安装包不是由 CI 从公开源码构建的，也无法和源码对照验证。程序启动时还会访问一个归属不明的第三方服务器。MhyCarry 的出发点就是**可验证、不经过第三方**：
+同类工具 MHY_Scanner 的 Release 安装包不是由 CI 从公开源码构建的，也无法和源码对照验证。作者在 issue #182（2026-06-01）里说明，新版源码不会公开，只给内部贡献者。程序启动时还会访问一个归属不明的第三方服务器。MhyCarry 的出发点就是**可验证、不经过第三方**：
 - 账号凭证只发给米哈游官方域名；
 - 发布的程序只由 CI 从公开源码构建，并附构建来源证明；
 - 依赖尽量少，代码容易审查。
@@ -17,7 +17,7 @@ MhyCarry 识别屏幕上的米哈游游戏登录二维码，用你绑定的账�
 
 **v1 包含：**
 - 用米游社 App 扫码绑定一个账号，可以解绑。
-- 扫描三种截图目标里的原神登录二维码：自动识别的游戏窗口、手动指定的窗口（比如浏览器里的云原神）、整个显示器。
+- 扫描三种截图目标里的原神客户端登录二维码：自动识别的游戏窗口、手动指定的窗口（比如浏览器里正在看的直播）、整个显示器。
 - 每次登录前都弹出系统原生对话框，由你确认。
 - 只发布 Windows 版，包括安装包和免安装 exe。
 
@@ -31,6 +31,7 @@ MhyCarry 识别屏幕上的米哈游游戏登录二维码，用你绑定的账�
 - 直播流抢码：加一个画面来源和一种确认策略。
 - 加密存储：换一个存储实现。
 - macOS 和 Linux：加对应平台的截图实现。
+- 云原神：它的登录二维码是 passport 网页登录码（`user.mihoyo.com/login-platform/...`），不是客户端的 `qr_code_in_game.html`。这种二维码本身看不出是哪个游戏，要先调 `scanQRLogin`，再按返回的 `app_id` 核对。v1 不支持。
 
 ## 3. 技术选型
 
@@ -40,12 +41,12 @@ MhyCarry 识别屏幕上的米哈游游戏登录二维码，用你绑定的账�
 | 桌面应用框架 | Tauri 2 | 使用系统 WebView（Windows 上是 WebView2） |
 | 前端 | 纯 HTML/CSS/JS | 不引入 npm 依赖，没有构建步骤。不用 TypeScript，因为编译 TS 需要 npm 工具链 |
 | Tauri CLI | `cargo install tauri-cli --locked` | 整个工具链只需要 cargo |
-| HTTP | reqwest + rustls | 异步，运行在 tokio 上 |
+| HTTP | reqwest 0.13 | 异步，运行在 tokio 上。默认用 rustls，证书走系统证书库校验（rustls-platform-verifier） |
 | JSON | serde / serde_json | |
 | URL 解析 | url | |
 | 二维码识别 | rxing | 纯 Rust 移植的 ZXing，不需要 C++ 工具链 |
 | 二维码生成 | qrcode | 绑定账号时生成 SVG 显示在界面上；测试里也用它造样例 |
-| 截图 | xcap 或 windows-capture | 在 M1 实测后二选一（第 14 节） |
+| 截图 | xcap | 有 GDI 和 Windows.Graphics.Capture（`wgc` feature）两种后端，在 M1 实测后选定（第 14 节） |
 | 窗口枚举 | windows（微软官方 crate） | |
 | 系统对话框 | tauri-plugin-dialog（只从 Rust 端调用） | |
 | 敏感值包装 | secrecy | 打印时自动显示成 `[REDACTED]` |
@@ -106,23 +107,22 @@ pub struct SourceInfo { pub kind: SourceKind, pub label: String } // 如 "YuanSh
 
 ```rust
 pub struct GameProfile {
-    pub id: &'static str,              // "hk4e_cn"
     pub display_name: &'static str,    // "原神"
     pub app_id: u32,                   // 4
-    pub biz_key: &'static str,         // "hk4e_cn"
-    pub scan_url: &'static str,        // https://api-sdk.mihoyo.com/hk4e_cn/combo/panda/qrcode/scan
-    pub confirm_url: &'static str,     // https://api-sdk.mihoyo.com/hk4e_cn/combo/panda/qrcode/confirm
+    pub biz_key: &'static str,         // "hk4e_cn"，也是 panda 扫码接口路径里的那一段
+    pub passport_app_id: &'static str, // "c76ync6mutq8"，scanQRLogin 返回的应用 ID
     pub process_names: &'static [&'static str], // ["YuanShen.exe"]
 }
 ```
-支持新游戏时只需要加一条配置。
+- 支持新游戏时只需要加一条配置。
+- 接口地址不放在配置里，由 `api` 按 `{panda 域名}/{biz_key}/combo/panda/qrcode/scan` 拼出来。各游戏的路径规律相同，而且这样测试时才能把域名换成本地假服务器。
 
 **`ConfirmPolicy`（确认策略）：** 识别到合法的二维码后决定怎么做，结果是 `AskUser`（问你）、`AutoConfirm`（直接登录）或 `Ignore`（忽略）。
 - v1 只有 `AlwaysAsk`：每次都问你。
 - 以后的直播抢码模式加 `AutoConfirmOnce`：你手动开启后，自动确认一次就关闭。
 - 硬性规则：画面来源是 `PickedWindow` 或 `Monitor` 时**永远不会**自动确认。策略如果返回 `AutoConfirm`，`ScanSession` 会强制改成 `AskUser`。这条规则写在 `core` 里，任何策略都绕不开。
 
-**`LoginApi`（登录接口）：** 换取 game_token、scan、confirm、绑定账号相关的请求。
+**`LoginApi`（登录接口）：** 检查凭证、扫码登录的三步请求（第 6.2 节），以及绑定账号相关的请求。
 - 正式实现在 `api` 里。
 - 测试时用假实现。
 - 以后接入登录方式不同的服务器（比如崩坏3 B服）时，再加一个实现。
@@ -142,13 +142,16 @@ pub struct GameProfile {
 3. 确认后拿到 uid、mid、stoken，写入账号文件。
 4. 二维码过期就提示刷新。v1 只支持一个账号：已有账号时再绑定，先让你确认，再替换掉旧账号。
 
-用哪组接口在 M1 确定（第 14 节）：
+接口（2026-10 对照活跃开源项目核对，来源见第 16 节）：
 
-- **方案 A**（来自 MHY_Scanner 公开源码）：
-  1. `POST https://hk4e-sdk.mihoyo.com/hk4e_cn/combo/panda/qrcode/fetch`，参数 `{app_id, device}`，拿到二维码 URL。原项目这里用的 app_id 是 2。
-  2. 轮询 `.../qrcode/query`，参数 `{app_id, device, ticket}`。`stat` 依次变为 `Init`、`Scanned`、`Confirmed`；确认后从 `payload.raw` 里取出 uid 和 game_token。
-  3. `POST https://api-takumi.mihoyo.com/account/ma-cn-session/app/getTokenByGameToken`，参数 `{account_id, game_token}`，需要带米游社 App 的请求头，返回 stoken 和 mid。
-- **方案 B**（出现在 MHY_Scanner v1.16.0 的 exe 里，请求格式未知）：使用 `passport-api.mihoyo.com` 的 `createQRLogin` 和 `queryQRLoginStatus`。
+1. `POST https://passport-api.mihoyo.com/account/ma-cn-passport/app/createQRLogin`，请求体 `{}`，返回 `data.url`（给米游社扫的二维码内容）和 `data.ticket`。
+2. 轮询 `POST .../app/queryQRLoginStatus`，请求体 `{"ticket": …}`。
+   - `data.status` 依次变为 `Created`、`Scanned`、`Confirmed`。
+   - 确认后，`data.tokens` 里 `token_type == 1` 的那一项就是 v2 stoken，`data.user_info` 里有 `aid`（即 uid）和 `mid`。
+   - retcode `-3501` 表示二维码过期，`-3505` 表示用户在手机上取消。
+3. 请求头用米哈游启动器（HoYoPlay）的那一套：`x-rpc-app_id: ddxf5dufpuyo`、`x-rpc-client_type: 3`、`x-rpc-device_id`、`User-Agent: HYPContainer/1.1.4.133`。不需要 DS 签名。
+
+MHY_Scanner 公开源码里的旧方案（panda `fetch`/`query`，再调 `getTokenByGameToken` 换 stoken）从 2026-05 底起会返回 `-5300`，已经不能用。
 
 ### 6.2 扫码登录
 
@@ -172,19 +175,20 @@ pub struct GameProfile {
    - 游戏名取自程序自己的 `GameProfile`，不用二维码里的 `app_name` 文字。
    - 来源描述取自 `SourceInfo`。
    - uid 只显示第一位和最后三位，中间打码。
-6. **登录**：你点了“登录”，程序才依次：
-   1. 换取最新的 game_token：`GET https://api-takumi.mihoyo.com/auth/api/getGameToken?stoken=…&mid=…`；
-   2. 调用 scan，参数 `{app_id, device, ticket}`；
-   3. 调用 confirm，参数 `{app_id, device, ticket, payload: {proto: "Account", raw: "{\"uid\":…,\"token\":<game_token>}"}}`。
+6. **登录**：你点了“登录”，程序才依次调用下面三步。所有请求都带 `x-rpc-app_id: bll8iq97cem8` 和 `x-rpc-device_id`，不带 DS 签名。
+   1. **panda 扫码：** `POST https://api-sdk.mihoyo.com/{biz_key}/combo/panda/qrcode/scan`，请求体 `{"passport_app_id": "bll8iq97cem8", "ticket": …, "app_id": 4, "device": …, "ts": <Unix 秒>}`，`app_id` 是 JSON 整数。返回的 `data.passport_qr_url` 形如 `https://user.mihoyo.com/login-platform/mobile.html?expire=…&tk=…&token_types=1#/login/qr`，按第 7 节末尾的规则校验后，取出 `tk` 和 `token_types`。
+   2. **passport 扫码：** `POST https://passport-api.mihoyo.com/account/ma-cn-passport/app/scanQRLogin`，请求体 `{"ticket": <tk>, "token_types": ["1"]}`，用 Cookie `stoken=…;mid=…` 认证。返回的 `data.app_id` 必须等于 `GameProfile.passport_app_id`，否则说明这不是这个游戏的登录码，**取消登录**，不调第 3 步。
+   3. **确认：** `POST .../app/confirmQRLogin`，请求体和 Cookie 同第 2 步。
 
-   返回值 `retcode` 为 0 表示成功。
+   每一步都要求 `retcode == 0`。已知错误码：`-100` 登录状态失效，`-3501` 二维码过期。
 7. **结束**：
    - 登录成功后停止扫描，界面显示结果。
-   - scan 或 confirm 失败时显示原因（第 10 节），二维码问题（过期、已被扫）会继续扫描，等游戏刷新二维码。
+   - 任何一步失败都显示原因（第 10 节）。二维码问题（过期、已被扫）会继续扫描，等游戏刷新二维码。
 8. **超时停止**：连续一段时间没发现合法的二维码就自动停止扫描，默认 300 秒，可以在设置里改。
 
 另外：
-- **会话开始时先检查凭证。** 扫描开始前先换一次 game_token，凭证失效就立刻提示重新绑定，免得扫到码才发现用不了。
+- **会话开始时先检查凭证。** 扫描开始前先调 `GET https://passport-api.mihoyo.com/account/auth/api/getCookieAccountInfoBySToken`（Cookie 认证），凭证失效就立刻提示重新绑定，免得扫到码才发现用不了。
+- **旧流程已经不能用。** MHY_Scanner 公开源码里“换 game_token 后调 panda `confirm`”的做法，2026 年起已被各活跃项目弃用。
 - **以后的直播抢码模式顺序相反。** 识别到二维码立刻 scan + confirm，因为 scan 要抢在别人前面。这个顺序由 `ConfirmPolicy` 和 `ScanSession` 决定，运行循环本身不用改。
 
 ## 7. 二维码校验规则
@@ -201,6 +205,8 @@ pub struct GameProfile {
 
 原神客户端二维码的样例格式：
 `https://user.mihoyo.com/qr_code_in_game.html?app_id=4&app_name=%E5%8E%9F%E7%A5%9E&bbs=true&biz_key=hk4e_cn&expire=1690964505&ticket=<24位十六进制>`
+
+panda 扫码返回的 `passport_qr_url` 来自服务器，同样要校验：https、host 正好是 `user.mihoyo.com`、path 是 `/login-platform/mobile.html`；`tk` 和 `token_types` 各出现一次，`tk` 只含字母、数字和 `-`，`token_types` 是逗号分隔的数字。
 
 ## 8. 数据存储（v1 明文）
 
@@ -253,7 +259,7 @@ pub struct GameProfile {
 | 风险 | 对策 |
 |---|---|
 | 凭证被发到第三方 | 网络白名单，没有遥测，不连任何第三方服务器 |
-| 被诱导把账号登录到别人的设备上（二维码劫持） | 严格校验二维码（第 7 节）；每次都要你确认；弹窗写明二维码来自哪里；自动确认永远不对“指定窗口”和“显示器”开放 |
+| 被诱导把账号登录到别人的设备上（二维码劫持） | 严格校验二维码（第 7 节）；每次都要你确认；弹窗写明二维码来自哪里；自动确认永远不对“指定窗口”和“显示器”开放；确认前核对服务器返回的应用 ID |
 | 发布的 exe 被替换，或者和源码对不上 | 只由 CI 构建，附构建来源证明和 SHA256，开启不可变发布 |
 | 依赖被投毒 | 依赖尽量少，`Cargo.lock` 锁定版本，cargo-deny 检查，GitHub Actions 引用固定到 commit SHA |
 
@@ -263,9 +269,9 @@ pub struct GameProfile {
 
 ### 网络
 - HTTP 客户端只能访问白名单域名，发请求前先检查 host。只允许 HTTPS，禁止重定向（`redirect::Policy::none()`），超时 10 秒。
-- 白名单最终只保留 M1 之后实际用到的域名，候选有：`api-takumi.mihoyo.com`、`api-sdk.mihoyo.com`、`hk4e-sdk.mihoyo.com`（方案 A）、`passport-api.mihoyo.com`（方案 B）。
-- 证书校验用 rustls 和 webpki 根证书的默认行为，不提供“忽略证书错误”之类的选项。
-- 测试时需要连本地假服务器，所以可以替换白名单和放行 http 的构造函数只放在 `test-support` feature 后面，正式构建不启用这个 feature。
+- 白名单只有两个域名：`api-sdk.mihoyo.com`（panda 扫码）和 `passport-api.mihoyo.com`（绑定、检查凭证、passport 扫码和确认）。如果 M1 实测 `api-sdk` 不通，就换成 `hk4e-sdk.mihoyo.com`（第 14 节）。
+- 证书校验用 reqwest 0.13 的默认行为（rustls + 系统证书库），不提供“忽略证书错误”之类的选项。
+- 测试时需要连本地假服务器。可以替换域名、放行 http 的构造函数只在 `#[cfg(test)]` 下存在，正式构建里根本没有这段代码。
 
 ### 界面隔离（Tauri）
 - **token 只存在于 Rust 一侧。** 界面能拿到的只有打码后的 uid、备注、运行状态和截图目标列表。
@@ -285,8 +291,9 @@ pub struct GameProfile {
 - **事件：** `bind-status`、`scan-status`。
 
 ### 日志
-- stoken、game_token 用 `secrecy::SecretString` 包装，打印时显示成 `[REDACTED]`。
-- `getGameToken` 的 stoken 在 URL 参数里，而 reqwest 的错误信息会带上完整 URL。所以记日志前先用 `reqwest::Error::without_url()` 去掉 URL。
+- stoken 用 `secrecy::SecretString` 包装，打印时显示成 `[REDACTED]`。
+- stoken 只放在 Cookie 请求头里，不放进 URL；这个请求头标记为敏感（`HeaderValue::set_sensitive`），调试输出里不会显示。
+- reqwest 的错误信息会带上完整 URL，所以错误一律先用 `reqwest::Error::without_url()` 去掉 URL。
 - 有一个测试专门检查：错误信息和日志输出里不会出现 token 原文。
 
 ## 10. 错误处理
@@ -296,14 +303,15 @@ pub struct GameProfile {
 
 | 类别 | 例子 | 界面提示 |
 |---|---|---|
-| 凭证失效 | stoken 过期、getGameToken 失败 | 请重新绑定账号 |
-| 二维码问题 | 已过期、已被扫、ticket 无效 | 请在游戏里刷新二维码（继续扫描） |
+| 凭证失效 | stoken 过期（retcode `-100`） | 请重新绑定账号 |
+| 二维码问题 | 已过期（`-3501`）、已被扫、ticket 无效 | 请在游戏里刷新二维码（继续扫描） |
+| 应用不符 | scanQRLogin 返回的应用 ID 不是这个游戏 | 已取消登录，显示服务器返回的应用名 |
 | 环境问题 | 找不到窗口、窗口最小化、截图失败、断网 | 具体原因和建议 |
 | 接口变化 | 未知 retcode、返回格式不对 | 显示 retcode 和服务器返回的 message，提示接口可能已变更，请提 Issue |
 
 - **重试规则：**
-  - 只有重复发送也没有副作用的请求（查询绑定状态、getGameToken）才自动重试，最多一次。
-  - scan 和 confirm 失败后不自动重试。
+  - 只有重复发送也没有副作用的请求（查询绑定状态、检查凭证）才自动重试，最多一次。
+  - 扫码登录的三步失败后都不自动重试。
 - **截图失败：** 偶尔一帧失败直接跳过；连续 10 帧失败就停止扫描并提示原因。
 - **账号文件读写失败：** 处理规则见第 8 节。
 
@@ -330,7 +338,8 @@ pub struct GameProfile {
   - **`JsonFileStore`：** 原子写入、损坏文件改名备份、遇到更新的格式时拒绝写入。
 - **`api`（用 wiremock 在本地起假服务器测）：**
   - 正常响应、各种 retcode 和格式错误的响应；
-  - 会被拒绝的情况：重定向、白名单外的 host、非 HTTPS（`test-support` 构造函数之外）；
+  - 请求头、Cookie 和请求体的字段与第 6 节一致；
+  - 会被拒绝的情况：重定向、白名单外的 host、非 HTTPS；
   - token 不会出现在错误信息和日志里。
 - **`platform` 和应用界面（v1 在 Windows 上按清单手动测）：**
   - 原神以管理员权限运行时能截图；
@@ -366,28 +375,50 @@ pub struct GameProfile {
 | 里程碑 | 内容 | 验收标准 |
 |---|---|---|
 | M0 仓库骨架 | workspace、各 crate 空壳、`rust-toolchain.toml`、`deny.toml`、`ci.yml`、MIT 许可证、README（含声明和安全说明） | CI 全部通过 |
-| M1 协议和截图验证 | `cli bind`（方案 A，不行再做方案 B）、`cli login <二维码URL>`、截图方案对比实验 | 用自己的账号，通过 `cli` 把原神客户端登录成功；第 14 节的三项实测都有结论，并更新到本文档 |
+| M1 协议和截图验证 | `cli bind`、`cli account`、`cli login <二维码URL或截图>`、截图方案对比实验 | 用自己的账号，通过 `cli` 把原神客户端登录成功；第 14 节的各项实测都有结论，并更新到本文档 |
 | M2 自动扫描 | `cli watch --target auto\|window\|monitor`：`ScanSession`、三种截图目标、在终端里确认 | 三种目标各成功登录一次；第 11 节的 `core` 和 `api` 测试全部通过 |
 | M3 Tauri 应用 | 界面、Rust 端对话框、capabilities 和 CSP 收紧 | 第 11 节的手动检查清单全部通过；网页端调用不到 dialog、文件等能力 |
 | M4 发布 v0.1.0 | `release.yml`、使用文档 | Release 带构建来源证明和 SHA256，`gh attestation verify` 核对通过 |
 
 ## 14. 需要在 M1 实测确定的事项
 
-1. **绑定接口用哪组。** 先实现方案 A，能拿到 uid、mid、stoken 就用 A。A 不行再研究方案 B 的请求格式，参考其他开源项目和公开资料。最终用的方案和 B 的请求格式都更新到第 6.1 节。
-2. **截图用 xcap 还是 windows-capture（Windows.Graphics.Capture）。** 合格标准：
+1. **接口细节。** 第 6 节的接口已经对照活跃开源项目核对过，但各项目之间有几处不一致，要用真实账号确认：
+   - **panda 扫码的域名：** 先用 `api-sdk.mihoyo.com`（多数项目用它，而且所有游戏通用）；不通就换 `hk4e-sdk.mihoyo.com`（有项目说官方客户端抓包是这个）。
+   - **DS 签名：** 先不加。如果 `scanQRLogin`、`confirmQRLogin` 返回 `-100`、`-3501` 以外的错误码，就加 DS2 签名再试（盐 `JwYDpKvLj6MrMqqYU6jTKF17KNO2PXoS`，佐证最多）。
+   - **原神的 passport 应用 ID：** 确认 `scanQRLogin` 对 PC 客户端二维码返回的 `data.app_id` 是 `c76ync6mutq8`。
+   - **检查凭证的接口：** 确认 `getCookieAccountInfoBySToken` 在 `passport-api` 域名下可用。
+   - **绑定：** 确认 HoYoPlay 那套请求头能用。另一套请求头（`x-rpc-app_id: dw9y09jqjpxc`）留作备选。
+2. **截图后端选 GDI 还是 Windows.Graphics.Capture（都用 xcap）。** 合格标准：
    - 本程序以普通权限运行，能截到以管理员权限运行的原神窗口的真实画面（不是黑屏）；
    - 不需要管理员权限，也不弹系统授权提示；
    - 在 4K 屏上维持每秒 4 帧，本程序 CPU 占用不超过一个核心的 25%。
 
-   两个都合格就选依赖更少的那个。Windows.Graphics.Capture 截图时窗口会出现黄色边框，这个可以接受，在 README 里说明即可。
-3. **浏览器里云原神的二维码。** 记录二维码的实际 URL：参数和客户端一样，就不用改；不一样，就在 `GameProfile` 表里加一条（比如云原神对应的 `app_id`、`biz_key`）。
+   两个都合格就选 GDI，它不需要额外的 feature。Windows.Graphics.Capture 截图时窗口会出现黄色边框，这个可以接受，在 README 里说明即可。两个都不合格，再单独实验 windows-capture crate。
+
+   注意：xcap 的 `app_name()` 取的是 exe 版本信息里的描述，不是进程名，而且对管理员权限运行的进程可能取不到。M2 按进程名找游戏窗口时要用 `QueryFullProcessImageNameW`。
+3. **云原神的二维码**（已有结论，不用实测）：它是 passport 网页登录码，v1 不支持，见第 2 节“以后的扩展”。
 
 ## 15. 许可证与声明
 
 - **许可证：** MIT。
-- **独立实现。** MHY_Scanner 是 GPL-3.0，MhyCarry **不复制它的任何代码**，只参考接口地址和协议格式这类公开信息。
+- **独立实现。** MHY_Scanner 是 GPL-3.0，MhyCarry **不复制它或其他项目的任何代码**，只参考接口地址和协议格式这类公开信息。
 - **README 写明：**
   - 本项目是非官方工具，与米哈游无关；
   - 使用了非公开接口，接口可能随时变化，使用者自行承担账号风险；
   - v1 只支持国服官服；
   - 账号凭证以明文存储，以及存储位置和删除方法。
+
+## 16. 接口参考来源
+
+第 6 节的接口细节在 2026-10-11 对照以下仍在维护的开源项目核对（括号里是仓库最近一次推送的日期）。只参考协议，不复制代码。
+
+| 项目 | 参考了什么 |
+|---|---|
+| SnapHutaoRemasteringProject/Snap.Hutao.Remastered（2026-10-11） | 绑定（HoYoPlay passport 扫码）、错误码 |
+| Genshin-bots/gsuid_core（2026-10-11） | 绑定从旧方案迁到 passport 的经过 |
+| FufuLauncher/FufuLauncher（2026-10-10） | 游戏码和 passport 码的校验、扫码流程 |
+| thesadru/genshin.py（2026-10-09） | passport 接口、DS2 盐 |
+| loqwe/MHY_Scanner2（2026-10-07） | 扫码三步流程、Cookie 认证、检查凭证 |
+| PaiGramTeam/SIMNet（2026-10-05） | 扫码三步流程、云原神二维码 |
+| nekwken/mhy-QRscanner（2026-09-17，Rust） | 和官方客户端抓包对照过的请求格式 |
+| jsnjzxy/MHY_Scanner-macOS（2026-05-31） | `docs/GAME_QR_LOGIN_FLOW.md`、`-5300` 的报告 |
