@@ -16,12 +16,18 @@ fn main() -> Result<(), Box<dyn Error>> {
     let fps: u64 = args.get(4).map(|s| s.parse()).transpose()?.unwrap_or(4);
     let backend = if cfg!(feature = "wgc") { "wgc" } else { "gdi" };
 
-    let window = Window::all()?
+    let mut candidates: Vec<Window> = Window::all()?
         .into_iter()
-        .find(|w| {
+        .filter(|w| {
             w.title().map(|t| t.contains(title.as_str())).unwrap_or(false)
                 && !w.is_minimized().unwrap_or(true)
         })
+        .collect();
+    // 标题完全相同的优先，免得选到“更好的原神”这类标题里也带关键字的窗口。
+    candidates.sort_by_key(|w| w.title().map(|t| t != *title).unwrap_or(true));
+    let window = candidates
+        .into_iter()
+        .next()
         .ok_or("没找到标题包含该关键字、且没有最小化的窗口")?;
     let monitor = window.current_monitor()?;
     println!(
