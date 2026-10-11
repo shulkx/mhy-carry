@@ -78,16 +78,27 @@ fn decode_image(path: &Path) -> Result<Vec<String>, Box<dyn Error>> {
     Ok(results.iter().map(|r| r.getText().to_owned()).collect())
 }
 
-/// 取第一个合法的游戏登录二维码。
+/// 取图片里唯一的游戏登录二维码。有不止一个不同的登录码时拒绝：没法判断该登录哪一个，
+/// 截图里也可能混进别人故意放的码（设计文档第 9 节的二维码劫持）。
 fn pick_login_qr(texts: &[String], now: i64) -> Result<LoginQr, String> {
+    let mut found: Option<LoginQr> = None;
     let mut last_error = None;
     for text in texts {
         match parse_login_qr(text, now) {
-            Ok(qr) => return Ok(qr),
+            Ok(qr) => match &found {
+                Some(first) if first.ticket != qr.ticket => {
+                    return Err(
+                        "图片里有不止一个游戏登录二维码，无法确定要登录哪一个。请只截取要登录的那个二维码"
+                            .to_owned(),
+                    );
+                }
+                Some(_) => {}
+                None => found = Some(qr),
+            },
             Err(error) => last_error = Some(error),
         }
     }
-    Err(match last_error {
+    found.ok_or_else(|| match last_error {
         Some(error) => format!("图片里的二维码不是有效的游戏登录码：{error}"),
         None => "图片里没有识别出二维码".to_owned(),
     })
@@ -105,6 +116,20 @@ mod tests {
         let texts = vec!["你好".to_owned(), VALID.to_owned()];
         let qr = pick_login_qr(&texts, NOW).unwrap();
         assert_eq!(qr.ticket, "66cf3afb2a1c7a308832bd56");
+    }
+
+    #[test]
+    fn refuses_several_different_login_qrs() {
+        let other = VALID.replace("66cf3afb2a1c7a308832bd56", "77cf3afb2a1c7a308832bd57");
+        let texts = vec![VALID.to_owned(), other];
+        let error = pick_login_qr(&texts, NOW).unwrap_err();
+        assert!(error.contains("不止一个"), "{error}");
+    }
+
+    #[test]
+    fn the_same_qr_found_twice_is_fine() {
+        let texts = vec![VALID.to_owned(), VALID.to_owned()];
+        assert!(pick_login_qr(&texts, NOW).is_ok());
     }
 
     #[test]
