@@ -8,6 +8,8 @@ mod endpoints;
 mod envelope;
 pub mod error;
 mod guard;
+mod login;
 
 pub use client::ApiClient;
 pub use error::{ApiError, retcode};
+pub use login::{Credentials, ScannedApp};
