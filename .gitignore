@@ -1,1 +1,3 @@
 target/
+# 截图实验保存的画面，可能拍到 uid 等个人信息
+spikes/capture-bench/*.png
