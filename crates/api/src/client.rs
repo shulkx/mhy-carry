@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use reqwest::header::{CONTENT_TYPE, HeaderMap, HeaderValue};
 use serde::Serialize;
-use serde::de::DeserializeOwned;
+use serde::de::{DeserializeOwned, IgnoredAny};
 use url::Url;
 
 use crate::endpoints::Endpoints;
@@ -121,7 +121,25 @@ async fn read_envelope<T: DeserializeOwned>(
         return Err(ApiError::Status(status.as_u16()));
     }
     let bytes = response.bytes().await.map_err(ApiError::network)?;
-    serde_json::from_slice(&bytes).map_err(|e| ApiError::Format(e.to_string()))
+    // 先只看 retcode：出错时 data 的结构可能和成功时不同，不能让它掩盖错误码。
+    serde_json::from_slice::<Envelope<IgnoredAny>>(&bytes)
+        .map_err(format_error)?
+        .ensure_ok()?;
+    serde_json::from_slice(&bytes).map_err(format_error)
+}
+
+/// 返回内容解析失败。serde 的类型、取值错误会带上字段原值（可能就是 stoken），
+/// 这类错误只报位置；缺字段的错误只含字段名，保留下来方便排查接口变化。
+fn format_error(error: serde_json::Error) -> ApiError {
+    let text = error.to_string();
+    if error.is_data() && !text.starts_with("missing field") {
+        return ApiError::Format(format!(
+            "字段类型或取值不对（第 {} 行第 {} 列）",
+            error.line(),
+            error.column()
+        ));
+    }
+    ApiError::Format(text)
 }
 
 #[cfg(test)]
@@ -189,5 +207,40 @@ mod tests {
         let client = ApiClient::new("device").unwrap();
         let result = post_to(&client, Url::parse("https://evil.cn/x").unwrap()).await;
         assert!(matches!(result, Err(ApiError::Blocked(_))), "{result:?}");
+    }
+
+    /// 用一个要求 data 是数组的类型去解析，制造 data 格式不对的情况。
+    async fn post_expecting_array(server: &MockServer, body: serde_json::Value) -> ApiError {
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(body))
+            .mount(server)
+            .await;
+        let client = ApiClient::for_tests(&server.uri());
+        let result: Result<Envelope<Vec<u8>>, ApiError> = client
+            .post_json(
+                client.endpoints.passport("/x"),
+                HeaderMap::new(),
+                &serde_json::json!({}),
+            )
+            .await;
+        result.unwrap_err()
+    }
+
+    #[tokio::test]
+    async fn retcode_is_reported_even_if_data_is_malformed() {
+        let server = MockServer::start().await;
+        let body = serde_json::json!({"retcode": -3501, "message": "二维码已过期", "data": {}});
+        let error = post_expecting_array(&server, body).await;
+        assert_eq!(error.retcode(), Some(-3501), "{error:?}");
+    }
+
+    #[tokio::test]
+    async fn format_errors_do_not_echo_values_from_the_response() {
+        let server = MockServer::start().await;
+        let body = serde_json::json!({"retcode": 0, "message": "OK", "data": "v2_secret_stoken"});
+        let error = post_expecting_array(&server, body).await;
+        let text = format!("{error} {error:?}");
+        assert!(matches!(error, ApiError::Format(_)), "{text}");
+        assert!(!text.contains("v2_secret_stoken"), "{text}");
     }
 }

@@ -252,6 +252,17 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn missing_field_error_names_the_field() {
+        let server = server_with_query_responses(vec![ok(json!({}))]).await;
+        let client = ApiClient::for_tests(&server.uri());
+        let error = client.query_bind_qr("t1").await.unwrap_err();
+        assert!(
+            matches!(&error, ApiError::Format(m) if m.contains("status")),
+            "{error}"
+        );
+    }
+
+    #[tokio::test]
     async fn unknown_status_is_a_format_error() {
         let server = server_with_query_responses(vec![ok(json!({"status": "Whatever"}))]).await;
         let client = ApiClient::for_tests(&server.uri());
