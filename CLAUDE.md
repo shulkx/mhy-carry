@@ -52,6 +52,6 @@ cargo run -p mhy-carry-cli -- account | bind | login <URL> | login --image <截�
 
 ## 本机环境
 
-- Windows，项目在 `E:\GitHub\mhy-carry`。写这份文件时本机还没装 Rust，见计划的任务 1；装完要重启 VS Code，新的 PATH 才会生效。
+- Windows，项目在 `E:\GitHub\mhy-carry`。工具链已在 2026-10-11 装好（计划任务 1 已完成）：Rust 1.99.0（rustup，带 rustfmt、clippy）、VS 2022 生成工具 17.14（MSVC 14.44）、cargo-deny 0.20.2。reqwest 0.13 的 aws-lc-rs 已在本机编译通过，TLS 访问 `passport-api.mihoyo.com` 正常。
 - 公司网络疑似会解密检查 HTTPS：单次 GitHub API 请求约 1.4 秒；curl 访问外网要加 `--ssl-no-revoke`，否则会报证书吊销检查失败。
 - `gh search code` 每分钟限 10 次。独立的查询放在同一轮里一起发，不要串行一个个查。
