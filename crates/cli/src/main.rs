@@ -1,4 +1,5 @@
 mod account_cmd;
+mod bind_cmd;
 mod context;
 mod prompt;
 
@@ -16,6 +17,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// 用米游社 App 扫码绑定账号
+    Bind,
     /// 查看已绑定的账号，或者解绑
     Account {
         /// 解绑，删除本机保存的账号凭证
@@ -30,6 +33,7 @@ pub type CliResult = Result<(), Box<dyn std::error::Error>>;
 async fn main() -> ExitCode {
     let cli = Cli::parse();
     let result = match cli.command {
+        Command::Bind => bind_cmd::run().await,
         Command::Account { remove } => account_cmd::run(remove),
     };
     match result {
