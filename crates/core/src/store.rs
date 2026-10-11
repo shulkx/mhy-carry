@@ -46,7 +46,7 @@ struct Header {
 
 enum OnDisk {
     Missing,
-    Supported(String),
+    Supported(Vec<u8>),
     Unsupported { format: u32, encryption: String },
     Unparsable,
 }
@@ -68,12 +68,13 @@ impl JsonFileStore {
     }
 
     fn read_on_disk(&self) -> Result<OnDisk, StoreError> {
-        let text = match fs::read_to_string(&self.path) {
-            Ok(text) => text,
+        // 按字节读：不是合法 UTF-8 的文件也要走“损坏”分支，不能变成读写都失败。
+        let bytes = match fs::read(&self.path) {
+            Ok(bytes) => bytes,
             Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(OnDisk::Missing),
             Err(e) => return Err(self.io_error(e)),
         };
-        Ok(match serde_json::from_str::<Header>(&text) {
+        Ok(match serde_json::from_slice::<Header>(&bytes) {
             Err(_) => OnDisk::Unparsable,
             Ok(h) if h.format > ACCOUNT_FILE_FORMAT || h.encryption != ENCRYPTION_NONE => {
                 OnDisk::Unsupported {
@@ -81,7 +82,7 @@ impl JsonFileStore {
                     encryption: h.encryption,
                 }
             }
-            Ok(_) => OnDisk::Supported(text),
+            Ok(_) => OnDisk::Supported(bytes),
         })
     }
 
@@ -102,7 +103,7 @@ impl AccountStore for JsonFileStore {
             OnDisk::Unparsable => Err(StoreError::Corrupt {
                 backup: self.back_up_corrupt_file()?,
             }),
-            OnDisk::Supported(text) => match serde_json::from_str(&text) {
+            OnDisk::Supported(bytes) => match serde_json::from_slice(&bytes) {
                 Ok(file) => Ok(file),
                 Err(_) => Err(StoreError::Corrupt {
                     backup: self.back_up_corrupt_file()?,
@@ -241,5 +242,13 @@ mod tests {
             .count();
         assert_eq!(backups, 1);
         assert!(store.load().unwrap().accounts.is_empty());
+    }
+
+    #[test]
+    fn non_utf8_file_counts_as_corrupt() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = store_in(&dir);
+        fs::write(store.path(), [0xff, 0xfe, 0x00, 0x7b]).unwrap();
+        assert!(matches!(store.load(), Err(StoreError::Corrupt { .. })));
     }
 }

@@ -37,8 +37,9 @@ impl Settings {
             path: path.to_path_buf(),
             source,
         };
-        match fs::read_to_string(path) {
-            Ok(text) => match serde_json::from_str::<Settings>(&text) {
+        // 按字节读：不是合法 UTF-8 的文件也当作损坏处理。
+        match fs::read(path) {
+            Ok(bytes) => match serde_json::from_slice::<Settings>(&bytes) {
                 Ok(settings) => return Ok(settings),
                 Err(_) => fs::rename(path, backup_path(path)).map_err(io_error)?,
             },
@@ -108,5 +109,14 @@ mod tests {
         .unwrap();
         let settings = Settings::load_or_init(&path).unwrap();
         assert_eq!(settings.device_id, "0b8f4a1e-1111-4222-8333-944445555666");
+    }
+
+    #[test]
+    fn non_utf8_settings_are_backed_up_and_recreated() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        fs::write(&path, [0xff, 0xfe, 0x00, 0x7b]).unwrap();
+        let settings = Settings::load_or_init(&path).unwrap();
+        assert_eq!(settings.format, SETTINGS_FORMAT);
     }
 }
