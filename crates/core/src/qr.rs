@@ -35,7 +35,8 @@ pub enum QrError {
     DuplicateParam(&'static str),
     #[error("参数 {0} 格式不对")]
     BadParam(&'static str),
-    #[error("不支持的游戏（app_id={app_id}，biz_key={biz_key}）")]
+    /// 两个值都来自二维码，用 `{:?}` 显示，控制字符会被转义，不会污染终端。
+    #[error("不支持的游戏（app_id={app_id:?}，biz_key={biz_key:?}）")]
     UnknownGame { app_id: String, biz_key: String },
     #[error("二维码已过期")]
     Expired,
@@ -286,6 +287,14 @@ mod tests {
                 "{app_id} {biz_key}: {result:?}"
             );
         }
+    }
+
+    #[test]
+    fn error_message_escapes_control_characters_from_the_qr() {
+        // ESC [2J 会清空终端屏幕。
+        let text = url_with(&query_replacing("biz_key", "%1B%5B2Jx"));
+        let error = parse_login_qr(&text, NOW).unwrap_err();
+        assert!(!error.to_string().contains('\u{1b}'), "{error:?}");
     }
 
     #[test]
