@@ -4,6 +4,7 @@
 
 pub mod account;
 pub mod capture;
+pub mod decode;
 pub mod fsutil;
 pub mod games;
 pub mod qr;

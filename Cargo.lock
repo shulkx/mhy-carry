@@ -1216,6 +1216,8 @@ version = "0.1.0"
 dependencies = [
  "jiff",
  "proptest",
+ "qrcode",
+ "rxing",
  "secrecy",
  "serde",
  "serde_json",

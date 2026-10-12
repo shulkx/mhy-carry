@@ -15,7 +15,9 @@ secrecy.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 uuid.workspace = true
+rxing.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true
 tempfile.workspace = true
+qrcode.workspace = true
