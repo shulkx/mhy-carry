@@ -3,6 +3,7 @@
 #![forbid(unsafe_code)]
 
 pub mod account;
+pub mod capture;
 pub mod fsutil;
 pub mod games;
 pub mod qr;
