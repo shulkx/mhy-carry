@@ -20,7 +20,7 @@ pub static GAMES: &[GameProfile] = &[GameProfile {
     display_name: "原神",
     app_id: 4,
     biz_key: "hk4e_cn",
-    // 来自其他开源项目的抓包记录，M1 用真实账号确认（设计文档第 14 节）。
+    // 最初来自其他开源项目的抓包记录，M1 已用真实账号确认（设计文档第 14 节）。
     passport_app_id: "c76ync6mutq8",
     process_names: &["YuanShen.exe"],
 }];

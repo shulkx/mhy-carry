@@ -1,7 +1,7 @@
 # MhyCarry 设计文档（v1）
 
 - 日期：2026-10-11
-- 状态：已确认；同日按接口核对结果修订了第 6、9、10、14 节
+- 状态：已确认；同日按接口核对结果修订了第 6、9、10、14 节。2026-10-12 M1 已完成，实测结论写入第 3、9、14 节
 - v1 范围：Windows，原神国服官服，一个账号
 
 ## 1. 背景与目标
@@ -46,7 +46,7 @@ MhyCarry 识别屏幕上的米哈游游戏登录二维码，用你绑定的账�
 | URL 解析 | url | |
 | 二维码识别 | rxing | 纯 Rust 移植的 ZXing，不需要 C++ 工具链 |
 | 二维码生成 | qrcode | 绑定账号时生成 SVG 显示在界面上；测试里也用它造样例 |
-| 截图 | xcap | 有 GDI 和 Windows.Graphics.Capture（`wgc` feature）两种后端，在 M1 实测后选定（第 14 节） |
+| 截图 | xcap | 用默认的 GDI 后端，截游戏窗口所在的屏幕区域（M1 实测选定，见第 14 节） |
 | 窗口枚举 | windows（微软官方 crate） | |
 | 系统对话框 | tauri-plugin-dialog（只从 Rust 端调用） | |
 | 敏感值包装 | secrecy | 打印时自动显示成 `[REDACTED]` |
@@ -269,7 +269,7 @@ panda 扫码返回的 `passport_qr_url` 来自服务器，同样要校验：http
 
 ### 网络
 - HTTP 客户端只能访问白名单域名，发请求前先检查 host。只允许 HTTPS，禁止重定向（`redirect::Policy::none()`），超时 10 秒。
-- 白名单只有两个域名：`api-sdk.mihoyo.com`（panda 扫码）和 `passport-api.mihoyo.com`（绑定、检查凭证、passport 扫码和确认）。如果 M1 实测 `api-sdk` 不通，就换成 `hk4e-sdk.mihoyo.com`（第 14 节）。
+- 白名单只有两个域名：`api-sdk.mihoyo.com`（panda 扫码）和 `passport-api.mihoyo.com`（绑定、检查凭证、passport 扫码和确认）。M1 已实测这两个域名可用（第 14 节）。
 - 证书校验用 reqwest 0.13 的默认行为（rustls + 系统证书库），不提供“忽略证书错误”之类的选项。
 - 测试时需要连本地假服务器。可以替换域名、放行 http 的构造函数只在 `#[cfg(test)]` 下存在，正式构建里根本没有这段代码。
 
@@ -382,20 +382,37 @@ panda 扫码返回的 `passport_qr_url` 来自服务器，同样要校验：http
 
 ## 14. 需要在 M1 实测确定的事项
 
-1. **接口细节。** 第 6 节的接口已经对照活跃开源项目核对过，但各项目之间有几处不一致，要用真实账号确认：
-   - **panda 扫码的域名：** 先用 `api-sdk.mihoyo.com`（多数项目用它，而且所有游戏通用）；不通就换 `hk4e-sdk.mihoyo.com`（有项目说官方客户端抓包是这个）。
-   - **DS 签名：** 先不加。如果 `scanQRLogin`、`confirmQRLogin` 返回 `-100`、`-3501` 以外的错误码，就加 DS2 签名再试（盐 `JwYDpKvLj6MrMqqYU6jTKF17KNO2PXoS`，佐证最多）。
-   - **原神的 passport 应用 ID：** 确认 `scanQRLogin` 对 PC 客户端二维码返回的 `data.app_id` 是 `c76ync6mutq8`。
-   - **检查凭证的接口：** 确认 `getCookieAccountInfoBySToken` 在 `passport-api` 域名下可用。
-   - **绑定：** 确认 HoYoPlay 那套请求头能用。另一套请求头（`x-rpc-app_id: dw9y09jqjpxc`）留作备选。
-2. **截图后端选 GDI 还是 Windows.Graphics.Capture（都用 xcap）。** 合格标准：
-   - 本程序以普通权限运行，能截到以管理员权限运行的原神窗口的真实画面（不是黑屏）；
+2026-10-12 已全部有结论。
+
+1. **接口细节。** 第 6 节的接口事先对照活跃开源项目核对过，但各项目之间有几处不一致。2026-10-12 用真实账号实测，`cli bind` 和 `cli login --image` 都一次成功，原神客户端登录成功。各项结论如下，全部是第 6 节的首选方案：
+   - **panda 扫码的域名：** `api-sdk.mihoyo.com` 可用。备选的 `hk4e-sdk.mihoyo.com` 不需要。
+   - **DS 签名：** 不需要。`scanQRLogin`、`confirmQRLogin` 不带 DS 也成功了，所以计划里的 DS2 签名（任务 19）没有做。
+   - **原神的 passport 应用 ID：** `scanQRLogin` 对 PC 客户端二维码返回的 `data.app_id` 是 `c76ync6mutq8`。程序在确认登录前会核对这个值，不一致就取消登录；这次核对通过了。
+   - **检查凭证的接口：** `getCookieAccountInfoBySToken` 在 `passport-api` 域名下可用。
+   - **绑定：** HoYoPlay 那套请求头可用。备选的 `x-rpc-app_id: dw9y09jqjpxc` 不需要。
+2. **截图后端选 GDI 还是 Windows.Graphics.Capture（WGC，都用 xcap）。** 合格标准是：
+   - 本程序以普通权限运行，能截到以管理员权限运行的原神窗口的真实画面，不是黑屏；
    - 不需要管理员权限，也不弹系统授权提示；
    - 在 4K 屏上维持每秒 4 帧，本程序 CPU 占用不超过一个核心的 25%。
 
-   两个都合格就选 GDI，它不需要额外的 feature。Windows.Graphics.Capture 截图时窗口会出现黄色边框，这个可以接受，在 README 里说明即可。两个都不合格，再单独实验 windows-capture crate。
+   两种后端都合格时选 GDI，因为它不需要额外的 feature。
 
-   注意：xcap 的 `app_name()` 取的是 exe 版本信息里的描述，不是进程名，而且对管理员权限运行的进程可能取不到。M2 按进程名找游戏窗口时要用 `QueryFullProcessImageNameW`。
+   实测环境：4K 显示器（3840×2160，缩放 150%）；原神以管理员权限运行，窗口 1922×1126；实验程序（`spikes/capture-bench`）以普通权限运行。每种组合跑 60 秒，目标每秒 4 帧。
+
+   | 后端 | 截法 | 结果 | 平均每帧耗时 | CPU（一个核心） | 是否合格 |
+   |---|---|---|---|---|---|
+   | GDI | 截窗口（PrintWindow） | 截到的图是 1424×1076，和窗口尺寸对不上；非黑像素占 99.0% | 179.5 ms | 67.6% | 否，CPU 超标 |
+   | GDI | 截窗口所在的屏幕区域（BitBlt） | 1922×1126，非黑像素占 99.2% | 14.8 ms | 1.2% | **是** |
+   | WGC | 截窗口 | 20 次都超时（`timed out waiting on channel`），一帧也没截到 | — | — | 否 |
+   | WGC | 截窗口所在的屏幕区域 | 1922×1126，非黑像素占 99.2% | 35.9 ms | 6.8% | 是 |
+
+   **结论：选 GDI 后端，截游戏窗口所在的屏幕区域。** 不需要 `wgc` feature，也就没有 WGC 的黄色边框问题。
+
+   M2 要注意下面几点：
+   - **窗口被挡住时截不到游戏。** 截屏幕区域截的是那块区域实际显示的内容，游戏窗口被别的窗口挡住时，截到的是挡在上面的东西。窗口最小化时要暂停扫描，这在第 6.2 节已有规定。
+   - **坐标单位一致。** 窗口和显示器的坐标、尺寸都是物理像素。在 150% 缩放下实测，窗口是 1922×1126，截到的图也是 1922×1126。
+   - **可以用 `app_name()` 按进程名找窗口。** 事先的判断是 xcap 的 `app_name()` 取的是 exe 版本信息里的描述，实测并非如此：xcap 0.9.8 返回的是 exe 的完整路径（`…\Genshin Impact Game\YuanShen.exe`），以普通权限运行也能取到管理员进程的路径。所以 M2 可以直接拿路径里的文件名去匹配 `GameProfile.process_names`，不一定要自己调 `QueryFullProcessImageNameW`。
+   - **按窗口标题找窗口时要求完全相同。** BetterGI 的窗口标题“更好的原神”里也包含“原神”。
 3. **云原神的二维码**（已有结论，不用实测）：它是 passport 网页登录码，v1 不支持，见第 2 节“以后的扩展”。
 
 ## 15. 许可证与声明

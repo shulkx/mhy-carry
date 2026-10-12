@@ -3,7 +3,7 @@
 use url::Url;
 
 /// panda 扫码。各游戏通用，路径是 `/{biz_key}/combo/panda/qrcode/scan`。
-/// 如果 M1 实测不通，就换成 `hk4e-sdk.mihoyo.com`（设计文档第 14 节）。
+/// M1 已用真实账号实测可用（设计文档第 14 节）。
 pub const PANDA_HOST: &str = "api-sdk.mihoyo.com";
 /// 绑定、检查凭证、passport 扫码和确认。
 pub const PASSPORT_HOST: &str = "passport-api.mihoyo.com";
