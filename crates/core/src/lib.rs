@@ -8,3 +8,4 @@ pub mod games;
 pub mod qr;
 pub mod settings;
 pub mod store;
+pub mod text;
