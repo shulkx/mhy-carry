@@ -248,13 +248,18 @@ pub struct ScanSession {
     idle_timeout: Duration,
     policy: Box<dyn ConfirmPolicy + Send>,
     status: ScanStatus,
-    /// 超时从这个时间点算起：会话开始、上一次发现合法登录码、你回答、登录结束。
+    /// 超时从这个时间点算起：会话开始、上一次发现新的合法登录码、你回答、登录结束。
     idle_since: Instant,
     capture_failures: u32,
     /// 本次会话处理过的 ticket，同一个只处理一次（设计文档第 6.2 节第 4 步）。
     seen: HashSet<String>,
+    /// 本次会话在画面里见过的 ticket。只有新出现的码才让超时重新计时，
+    /// 否则一个处理过的码一直留在画面上，扫描就永远不会超时。
+    recognized: HashSet<String>,
     /// 正在确认或登录的二维码。
     pending: Option<LoginQr>,
+    /// 登录中途你要求停止：等登录结果出来再停。
+    stop_requested: bool,
     /// 最近一帧画面的来源，回到扫描状态时显示。
     source_label: String,
     notice: Option<Notice>,
@@ -279,7 +284,9 @@ impl ScanSession {
             idle_since: now.instant,
             capture_failures: 0,
             seen: HashSet::new(),
+            recognized: HashSet::new(),
             pending: None,
+            stop_requested: false,
             notice: None,
         };
         (session, Action::CheckCredential)
@@ -308,7 +315,7 @@ impl ScanSession {
             Event::Answered(yes) => self.on_answered(yes, now),
             Event::LoginFinished(result) => self.on_login_finished(result, now),
             Event::Tick => None,
-            Event::StopRequested => Some(self.finish(StopReason::UserStopped)),
+            Event::StopRequested => self.on_stop_requested(),
         }
     }
 
@@ -328,6 +335,15 @@ impl ScanSession {
         self.status = ScanStatus::Idle { last: Some(reason) };
         self.pending = None;
         Action::Finish
+    }
+
+    fn on_stop_requested(&mut self) -> Option<Action> {
+        // 登录请求已经发出去了，等结果出来再停，免得登录成功了却显示成“手动停止”。
+        if self.status == ScanStatus::LoggingIn {
+            self.stop_requested = true;
+            return None;
+        }
+        Some(self.finish(StopReason::UserStopped))
     }
 
     fn show_scanning(&mut self) {
@@ -416,8 +432,14 @@ impl ScanSession {
             self.show_scanning();
             return None;
         }
-        // 发现了合法的登录码，超时重新计时。
-        self.idle_since = now.instant;
+        // 画面里出现了新的合法登录码，超时重新计时。一直留在画面上的旧码不算。
+        let mut found_new = false;
+        for code in &codes {
+            found_new |= self.recognized.insert(code.ticket.clone());
+        }
+        if found_new {
+            self.idle_since = now.instant;
+        }
         if codes.len() > 1 {
             // 不弹窗：确认框里的文字分辨不出是哪一个（设计文档第 6.2 节第 2 步）。
             self.notice = Some(Notice::MultipleQrs);
@@ -429,7 +451,9 @@ impl ScanSession {
             self.show_scanning();
             return None;
         }
-        match enforce_hard_rules(self.policy.decide(&source, &qr), &source) {
+        // 硬性规则既看画面自己报的来源，也看你开始时选的目标，取严格的那个。
+        let decision = enforce_hard_rules(self.policy.decide(&source, &qr), &source);
+        match enforce_hard_rules(decision, &self.target) {
             Decision::Ignore => {
                 self.show_scanning();
                 None
@@ -498,6 +522,9 @@ impl ScanSession {
                 message: printable(&message),
             },
         };
+        if self.stop_requested {
+            return Some(self.finish(StopReason::UserStopped));
+        }
         self.notice = Some(notice);
         self.show_scanning();
         None
@@ -917,6 +944,14 @@ mod tests {
         }
     }
 
+    #[test]
+    fn hard_rules_also_look_at_the_chosen_target() {
+        // 即使画面自称来自游戏窗口，你选的是指定窗口时也不能自动确认。
+        let clock = Clock::new();
+        let mut session = start(picked_window(), Box::new(AutoConfirmAll), &clock);
+        asked(session.handle(frame(found_game(), &[VALID]), clock.at(1)));
+    }
+
     struct FakeSource(Vec<Result<Frame, CaptureError>>);
 
     impl FrameSource for FakeSource {
@@ -1047,7 +1082,73 @@ mod tests {
         }
     }
 
+    #[test]
+    fn stopping_while_logging_in_waits_for_the_result() {
+        // 登录请求已经发出去了，停止不能让人以为没登录。
+        let clock = Clock::new();
+        let mut session = logging_in(&clock);
+        assert_eq!(session.handle(Event::StopRequested, clock.at(3)), None);
+        assert_eq!(session.status(), &ScanStatus::LoggingIn);
+        assert_eq!(
+            session.handle(Event::LoginFinished(Ok(())), clock.at(4)),
+            Some(Action::Finish)
+        );
+        assert_eq!(
+            stop_reason(&session),
+            Some(StopReason::LoggedIn {
+                game: "原神".to_owned()
+            })
+        );
+    }
+
+    #[test]
+    fn stopping_while_logging_in_stops_after_a_failed_login() {
+        let clock = Clock::new();
+        let mut session = logging_in(&clock);
+        session.handle(Event::StopRequested, clock.at(3));
+        assert_eq!(
+            session.handle(Event::LoginFinished(Err(Failure::QrExpired)), clock.at(4)),
+            Some(Action::Finish)
+        );
+        assert_eq!(stop_reason(&session), Some(StopReason::UserStopped));
+    }
+
     // ---- 超时 ----
+
+    #[test]
+    fn a_handled_qr_left_on_screen_does_not_keep_the_session_alive() {
+        let clock = Clock::new();
+        let mut session = start(game_window(), Box::new(AlwaysAsk), &clock);
+        asked(session.handle(frame(found_game(), &[VALID]), clock.at(10)));
+        session.handle(Event::Answered(false), clock.at(20));
+        // 拒绝过的码一直留在画面上，不再重新计时。
+        assert_eq!(
+            session.handle(frame(found_game(), &[VALID]), clock.at(200)),
+            None
+        );
+        assert_eq!(
+            session.handle(frame(found_game(), &[VALID]), clock.at(320)),
+            Some(Action::Finish)
+        );
+    }
+
+    #[test]
+    fn several_codes_left_on_screen_do_not_keep_the_session_alive() {
+        let clock = Clock::new();
+        let mut session = start(game_window(), Box::new(AlwaysAsk), &clock);
+        assert_eq!(
+            session.handle(frame(found_game(), &[VALID, OTHER]), clock.at(10)),
+            None
+        );
+        assert_eq!(
+            session.handle(frame(found_game(), &[VALID, OTHER]), clock.at(200)),
+            None
+        );
+        assert_eq!(
+            session.handle(frame(found_game(), &[VALID, OTHER]), clock.at(310)),
+            Some(Action::Finish)
+        );
+    }
 
     #[test]
     fn stops_after_the_idle_timeout() {
