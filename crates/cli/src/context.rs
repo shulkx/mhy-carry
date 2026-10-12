@@ -10,6 +10,7 @@ use mhy_carry_platform::paths;
 pub struct Context {
     pub store: JsonFileStore,
     pub api: ApiClient,
+    pub settings: Settings,
 }
 
 impl Context {
@@ -18,7 +19,8 @@ impl Context {
         let settings = Settings::load_or_init(&paths::settings_path()?)?;
         Ok(Self {
             store: open_store()?,
-            api: ApiClient::new(settings.device_id)?,
+            api: ApiClient::new(settings.device_id.clone())?,
+            settings,
         })
     }
 }

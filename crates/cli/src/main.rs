@@ -3,6 +3,7 @@ mod bind_cmd;
 mod context;
 mod login_cmd;
 mod prompt;
+mod watch_cmd;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -36,6 +37,12 @@ enum Command {
         #[arg(long)]
         image: Option<PathBuf>,
     },
+    /// 自动截图识别登录二维码，发现后问你要不要登录
+    Watch {
+        /// 截图目标；不填时用设置里的默认值（auto）
+        #[arg(long, value_enum)]
+        target: Option<watch_cmd::Target>,
+    },
 }
 
 pub type CliResult = Result<(), Box<dyn std::error::Error>>;
@@ -54,6 +61,7 @@ async fn main() -> ExitCode {
             };
             login_cmd::run(source).await
         }
+        Command::Watch { target } => watch_cmd::run(target.map(Into::into)).await,
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,
