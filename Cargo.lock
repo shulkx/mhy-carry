@@ -1205,7 +1205,6 @@ dependencies = [
  "mhy-carry-core",
  "mhy-carry-platform",
  "qrcode",
- "rxing",
  "tempfile",
  "tokio",
 ]

@@ -15,7 +15,6 @@ clap.workspace = true
 image.workspace = true
 jiff.workspace = true
 qrcode.workspace = true
-rxing.workspace = true
 tokio.workspace = true
 
 [dev-dependencies]

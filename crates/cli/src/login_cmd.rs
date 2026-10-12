@@ -4,6 +4,8 @@ use std::error::Error;
 use std::path::{Path, PathBuf};
 
 use mhy_carry_api::Credentials;
+use mhy_carry_core::capture::Frame;
+use mhy_carry_core::decode::{QrDecoder, RxingDecoder};
 use mhy_carry_core::qr::{LoginQr, parse_login_qr};
 use mhy_carry_core::store::AccountStore;
 
@@ -67,15 +69,17 @@ pub async fn run(source: QrSource) -> CliResult {
     Ok(())
 }
 
-/// 识别图片里的所有二维码，返回它们的文本。图片先转成灰度，再交给 rxing。
+/// 识别图片里的所有二维码，返回它们的文本。图片先转成灰度，再交给 core 的识别器。
 fn decode_image(path: &Path) -> Result<Vec<String>, Box<dyn Error>> {
     let luma = image::open(path)
         .map_err(|e| format!("读取图片 {} 失败：{e}", path.display()))?
         .into_luma8();
     let (width, height) = luma.dimensions();
-    let results = rxing::helpers::detect_multiple_in_luma(luma.into_raw(), width, height)
-        .map_err(|e| format!("图片里没有识别出二维码：{e}"))?;
-    Ok(results.iter().map(|r| r.getText().to_owned()).collect())
+    Ok(RxingDecoder.decode(Frame {
+        width,
+        height,
+        luma: luma.into_raw(),
+    }))
 }
 
 /// 取图片里唯一的游戏登录二维码。有不止一个不同的登录码时拒绝：没法判断该登录哪一个，
