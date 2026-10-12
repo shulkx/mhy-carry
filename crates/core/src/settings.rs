@@ -15,6 +15,41 @@ pub struct Settings {
     pub format: u32,
     /// 首次运行时随机生成的 UUID v4，之后固定不变。
     pub device_id: String,
+    /// M1 写出的设置文件没有这一块，读的时候用默认值。
+    #[serde(default)]
+    pub scan: ScanSettings,
+}
+
+/// 扫描相关的设置（设计文档第 6.2、8 节）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ScanSettings {
+    /// 默认的截图目标。
+    pub default_target: TargetKind,
+    /// 连续这么多秒没发现登录二维码就停止扫描。
+    pub idle_timeout_secs: u64,
+}
+
+impl Default for ScanSettings {
+    fn default() -> Self {
+        Self {
+            default_target: TargetKind::Auto,
+            idle_timeout_secs: 300,
+        }
+    }
+}
+
+/// 截图目标的选法。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TargetKind {
+    /// 自动找游戏窗口。
+    #[default]
+    Auto,
+    /// 从列表里选一个窗口。
+    Window,
+    /// 整个显示器。
+    Monitor,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -49,6 +84,7 @@ impl Settings {
         let settings = Settings {
             format: SETTINGS_FORMAT,
             device_id: uuid::Uuid::new_v4().to_string(),
+            scan: ScanSettings::default(),
         };
         settings.save(path)?;
         Ok(settings)
@@ -131,5 +167,48 @@ mod tests {
         .unwrap();
         let settings = Settings::load_or_init(&path).unwrap();
         assert_eq!(settings.device_id, "0b8f4a1e-1111-4222-8333-944445555666");
+    }
+
+    #[test]
+    fn files_from_m1_get_default_scan_settings() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        fs::write(
+            &path,
+            r#"{"format":1,"device_id":"0b8f4a1e-1111-4222-8333-944445555666"}"#,
+        )
+        .unwrap();
+        let settings = Settings::load_or_init(&path).unwrap();
+        assert_eq!(
+            settings.scan,
+            ScanSettings {
+                default_target: TargetKind::Auto,
+                idle_timeout_secs: 300,
+            }
+        );
+    }
+
+    #[test]
+    fn reads_scan_settings() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        fs::write(
+            &path,
+            r#"{"format":1,"device_id":"0b8f4a1e-1111-4222-8333-944445555666","scan":{"default_target":"monitor","idle_timeout_secs":120}}"#,
+        )
+        .unwrap();
+        let settings = Settings::load_or_init(&path).unwrap();
+        assert_eq!(settings.scan.default_target, TargetKind::Monitor);
+        assert_eq!(settings.scan.idle_timeout_secs, 120);
+    }
+
+    #[test]
+    fn new_files_include_scan_settings() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        Settings::load_or_init(&path).unwrap();
+        let text = fs::read_to_string(&path).unwrap();
+        assert!(text.contains(r#""default_target": "auto""#), "{text}");
+        assert!(text.contains(r#""idle_timeout_secs": 300"#), "{text}");
     }
 }
