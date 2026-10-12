@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use serde::Deserialize;
 
 use crate::account::{ACCOUNT_FILE_FORMAT, AccountFile, ENCRYPTION_NONE};
-use crate::fsutil::{atomic_write, backup_path};
+use crate::fsutil::{atomic_write, backup_path, leftovers, strip_bom};
 
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
@@ -41,7 +41,9 @@ pub struct JsonFileStore {
 #[derive(Deserialize)]
 struct Header {
     format: u32,
-    encryption: String,
+    /// 以后的格式里它不一定还是字符串，先按任意 JSON 值读。
+    #[serde(default)]
+    encryption: serde_json::Value,
 }
 
 enum OnDisk {
@@ -60,6 +62,12 @@ impl JsonFileStore {
         &self.path
     }
 
+    /// 同目录下的损坏备份和没删掉的临时文件。它们是旧的账号文件，里面可能有明文凭证，
+    /// 解绑时要一并删除。
+    pub fn leftover_files(&self) -> Result<Vec<PathBuf>, StoreError> {
+        leftovers(&self.path).map_err(|e| self.io_error(e))
+    }
+
     fn io_error(&self, source: io::Error) -> StoreError {
         StoreError::Io {
             path: self.path.clone(),
@@ -69,20 +77,34 @@ impl JsonFileStore {
 
     fn read_on_disk(&self) -> Result<OnDisk, StoreError> {
         // 按字节读：不是合法 UTF-8 的文件也要走“损坏”分支，不能变成读写都失败。
-        let bytes = match fs::read(&self.path) {
-            Ok(bytes) => bytes,
+        let raw = match fs::read(&self.path) {
+            Ok(raw) => raw,
             Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(OnDisk::Missing),
             Err(e) => return Err(self.io_error(e)),
         };
-        Ok(match serde_json::from_slice::<Header>(&bytes) {
-            Err(_) => OnDisk::Unparsable,
-            Ok(h) if h.format > ACCOUNT_FILE_FORMAT || h.encryption != ENCRYPTION_NONE => {
-                OnDisk::Unsupported {
-                    format: h.format,
-                    encryption: h.encryption,
-                }
-            }
-            Ok(_) => OnDisk::Supported(bytes),
+        let bytes = strip_bom(&raw);
+        let Ok(header) = serde_json::from_slice::<Header>(bytes) else {
+            return Ok(OnDisk::Unparsable);
+        };
+        let encryption = match &header.encryption {
+            serde_json::Value::String(s) => s.clone(),
+            other => other.to_string(),
+        };
+        // 格式比本程序新时，不管其他字段长什么样都只读（设计文档第 8 节）。
+        if header.format > ACCOUNT_FILE_FORMAT {
+            return Ok(OnDisk::Unsupported {
+                format: header.format,
+                encryption,
+            });
+        }
+        Ok(match header.encryption.as_str() {
+            Some(ENCRYPTION_NONE) => OnDisk::Supported(bytes.to_vec()),
+            Some(_) => OnDisk::Unsupported {
+                format: header.format,
+                encryption,
+            },
+            // 本程序自己的格式却没有 encryption 字段，当作损坏。
+            None => OnDisk::Unparsable,
         })
     }
 
@@ -225,6 +247,54 @@ mod tests {
             store.load(),
             Err(StoreError::UnsupportedFormat { .. })
         ));
+    }
+
+    #[test]
+    fn newer_format_is_read_only_whatever_the_other_header_fields_look_like() {
+        for newer in [
+            r#"{"format":2}"#,
+            r#"{"format":2,"encryption":{"kind":"dpapi"}}"#,
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let store = store_in(&dir);
+            fs::write(store.path(), newer).unwrap();
+            assert!(
+                matches!(
+                    store.load(),
+                    Err(StoreError::UnsupportedFormat { format: 2, .. })
+                ),
+                "{newer}"
+            );
+            assert!(
+                matches!(
+                    store.save(&AccountFile::empty()),
+                    Err(StoreError::UnsupportedFormat { .. })
+                ),
+                "{newer}"
+            );
+            assert_eq!(fs::read_to_string(store.path()).unwrap(), newer);
+        }
+    }
+
+    #[test]
+    fn utf8_bom_is_accepted() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = store_in(&dir);
+        store.save(&file_with_one_account()).unwrap();
+        let mut bytes = b"\xEF\xBB\xBF".to_vec();
+        bytes.extend(fs::read(store.path()).unwrap());
+        fs::write(store.path(), bytes).unwrap();
+        assert_eq!(store.load().unwrap().accounts.len(), 1);
+    }
+
+    #[test]
+    fn lists_backups_left_by_a_corrupt_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = store_in(&dir);
+        assert!(store.leftover_files().unwrap().is_empty());
+        fs::write(store.path(), "garbage").unwrap();
+        assert!(store.load().is_err());
+        assert_eq!(store.leftover_files().unwrap().len(), 1);
     }
 
     #[test]

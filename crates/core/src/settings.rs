@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::fsutil::{atomic_write, backup_path};
+use crate::fsutil::{atomic_write, backup_path, strip_bom};
 
 pub const SETTINGS_FORMAT: u32 = 1;
 
@@ -39,7 +39,7 @@ impl Settings {
         };
         // 按字节读：不是合法 UTF-8 的文件也当作损坏处理。
         match fs::read(path) {
-            Ok(bytes) => match serde_json::from_slice::<Settings>(&bytes) {
+            Ok(bytes) => match serde_json::from_slice::<Settings>(strip_bom(&bytes)) {
                 Ok(settings) => return Ok(settings),
                 Err(_) => fs::rename(path, backup_path(path)).map_err(io_error)?,
             },
@@ -118,5 +118,18 @@ mod tests {
         fs::write(&path, [0xff, 0xfe, 0x00, 0x7b]).unwrap();
         let settings = Settings::load_or_init(&path).unwrap();
         assert_eq!(settings.format, SETTINGS_FORMAT);
+    }
+
+    #[test]
+    fn utf8_bom_is_accepted() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        fs::write(
+            &path,
+            "\u{feff}{\"format\":1,\"device_id\":\"0b8f4a1e-1111-4222-8333-944445555666\"}",
+        )
+        .unwrap();
+        let settings = Settings::load_or_init(&path).unwrap();
+        assert_eq!(settings.device_id, "0b8f4a1e-1111-4222-8333-944445555666");
     }
 }

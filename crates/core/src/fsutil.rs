@@ -18,22 +18,65 @@ pub fn atomic_write(path: &Path, contents: &[u8]) -> io::Result<()> {
     fs::create_dir_all(dir)?;
 
     let mut tmp_name = file_name.to_os_string();
-    tmp_name.push(".tmp");
+    tmp_name.push(TMP_SUFFIX);
     let tmp = dir.join(tmp_name);
-    {
-        let mut file = File::create(&tmp)?;
-        file.write_all(contents)?;
-        file.sync_all()?;
+    let result = File::create(&tmp)
+        .and_then(|mut file| {
+            file.write_all(contents)?;
+            file.sync_all()
+        })
+        // Windows 上 std::fs::rename 会直接替换已存在的目标文件。
+        .and_then(|()| fs::rename(&tmp, path));
+    if result.is_err() {
+        // 临时文件里可能就是明文凭证，失败了也不留下。
+        let _ = fs::remove_file(&tmp);
     }
-    // Windows 上 std::fs::rename 会直接替换已存在的目标文件。
-    fs::rename(&tmp, path)
+    result
 }
+
+const TMP_SUFFIX: &str = ".tmp";
+const BACKUP_INFIX: &str = ".bak-";
 
 /// 损坏文件的备份路径：同目录下的 `<原文件名>.bak-<Unix 秒>`。
 pub fn backup_path(path: &Path) -> PathBuf {
     let mut name: OsString = path.file_name().unwrap_or_default().to_os_string();
-    name.push(format!(".bak-{}", jiff::Timestamp::now().as_second()));
+    name.push(format!(
+        "{BACKUP_INFIX}{}",
+        jiff::Timestamp::now().as_second()
+    ));
     path.with_file_name(name)
+}
+
+/// 同目录下留下的损坏备份（`<原文件名>.bak-*`）和没删掉的临时文件（`<原文件名>.tmp`）。
+/// 目录不存在时返回空列表。
+pub fn leftovers(path: &Path) -> io::Result<Vec<PathBuf>> {
+    let (Some(dir), Some(name)) = (path.parent(), path.file_name().and_then(|n| n.to_str())) else {
+        return Ok(Vec::new());
+    };
+    let entries = match fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(e),
+    };
+    let backup_prefix = format!("{name}{BACKUP_INFIX}");
+    let tmp_name = format!("{name}{TMP_SUFFIX}");
+    let mut found = Vec::new();
+    for entry in entries {
+        let entry = entry?;
+        let file_name = entry.file_name();
+        let Some(file_name) = file_name.to_str() else {
+            continue;
+        };
+        if file_name.starts_with(&backup_prefix) || file_name == tmp_name {
+            found.push(entry.path());
+        }
+    }
+    Ok(found)
+}
+
+/// 去掉文件开头的 UTF-8 BOM。记事本选“UTF-8 带 BOM”保存时会加上它，JSON 解析不认。
+pub fn strip_bom(bytes: &[u8]) -> &[u8] {
+    bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(bytes)
 }
 
 #[cfg(test)]
@@ -61,6 +104,58 @@ mod tests {
             .map(|e| e.unwrap().file_name())
             .collect();
         assert_eq!(names, vec!["data.json"]);
+    }
+
+    #[test]
+    fn failed_write_leaves_no_temp_file() {
+        let dir = tempfile::tempdir().unwrap();
+        // 目标位置是个目录，替换一定失败。
+        let path = dir.path().join("data.json");
+        fs::create_dir(&path).unwrap();
+        assert!(atomic_write(&path, b"secret").is_err());
+        assert!(!dir.path().join("data.json.tmp").exists());
+    }
+
+    #[test]
+    fn finds_leftover_backups_and_temp_files() {
+        let dir = tempfile::tempdir().unwrap();
+        for name in [
+            "accounts.json",
+            "accounts.json.bak-1",
+            "accounts.json.bak-2",
+            "accounts.json.tmp",
+            "accounts.json.old",
+            "settings.json.bak-1",
+        ] {
+            fs::write(dir.path().join(name), "x").unwrap();
+        }
+        let mut found: Vec<_> = leftovers(&dir.path().join("accounts.json"))
+            .unwrap()
+            .into_iter()
+            .map(|p| p.file_name().unwrap().to_owned())
+            .collect();
+        found.sort();
+        assert_eq!(
+            found,
+            [
+                "accounts.json.bak-1",
+                "accounts.json.bak-2",
+                "accounts.json.tmp"
+            ]
+        );
+    }
+
+    #[test]
+    fn no_leftovers_when_the_directory_is_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("missing").join("accounts.json");
+        assert!(leftovers(&path).unwrap().is_empty());
+    }
+
+    #[test]
+    fn strips_utf8_bom() {
+        assert_eq!(strip_bom(b"\xEF\xBB\xBF{}"), b"{}");
+        assert_eq!(strip_bom(b"{}"), b"{}");
     }
 
     #[test]
