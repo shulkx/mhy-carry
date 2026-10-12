@@ -9,6 +9,7 @@ pub mod decode;
 pub mod fsutil;
 pub mod games;
 pub mod qr;
+pub mod scan;
 pub mod settings;
 pub mod store;
 pub mod text;
