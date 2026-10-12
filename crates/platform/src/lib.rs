@@ -1,4 +1,6 @@
-//! 和操作系统打交道的部分。M1 只有数据目录，M2 加窗口枚举和截图。
+//! 和操作系统打交道的部分：数据目录、窗口枚举和截图。截图只有 Windows 实现。
 
+#[cfg(windows)]
+pub mod capture;
 pub mod paths;
 pub mod target;

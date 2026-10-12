@@ -470,7 +470,7 @@ panda 扫码返回的 `passport_qr_url` 来自服务器，同样要校验：http
    M2 要注意下面几点：
    - **窗口被挡住时截不到游戏。** 截屏幕区域截的是那块区域实际显示的内容，游戏窗口被别的窗口挡住时，截到的是挡在上面的东西。窗口最小化时要暂停扫描，这在第 6.2 节已有规定。
    - **坐标单位一致。** 窗口和显示器的坐标、尺寸都是物理像素。在 150% 缩放下实测，窗口是 1922×1126，截到的图也是 1922×1126。
-   - **可以用 `app_name()` 按进程名找窗口。** 事先的判断是 xcap 的 `app_name()` 取的是 exe 版本信息里的描述，实测并非如此：xcap 0.9.8 返回的是 exe 的完整路径（`…\Genshin Impact Game\YuanShen.exe`），以普通权限运行也能取到管理员进程的路径。所以 M2 可以直接拿路径里的文件名去匹配 `GameProfile.process_names`，不一定要自己调 `QueryFullProcessImageNameW`。
+   - **按进程名找窗口要自己查 exe 路径。** xcap 0.9.8 的 `app_name()` 先读 exe 版本信息里的描述，读不到才退回 exe 路径。实测拿到完整路径（`…\Genshin Impact Game\YuanShen.exe`），只是因为 YuanShen.exe 没有版本信息，换个有版本信息的游戏就不成立。所以 M2 用 `QueryFullProcessImageNameW` 查 exe 路径再取文件名；用 `PROCESS_QUERY_LIMITED_INFORMATION` 打开进程，普通权限也能查到管理员进程。
    - **按窗口标题找窗口时要求完全相同。** BetterGI 的窗口标题“更好的原神”里也包含“原神”。
 3. **云原神的二维码**（已有结论，不用实测）：它是 passport 网页登录码，v1 不支持，见第 2 节“以后的扩展”。
 
