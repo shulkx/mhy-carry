@@ -1,5 +1,7 @@
 //! 接口错误。错误信息里不会出现 URL 和凭证。
 
+use mhy_carry_core::text::printable;
+
 /// 已知的 retcode。
 pub mod retcode {
     /// 登录状态失效（stoken 过期或被下线）。
@@ -43,7 +45,10 @@ fn describe_retcode(code: &i64, message: &str) -> String {
         retcode::TOKEN_INVALID => format!("登录状态已失效，请重新绑定账号（retcode={code}）"),
         retcode::QR_EXPIRED => format!("二维码已过期，请刷新后重试（retcode={code}）"),
         retcode::QR_CANCELLED => format!("已在手机上取消（retcode={code}）"),
-        _ => format!("服务器返回错误 retcode={code}：{message}。接口可能已变更，请提 Issue"),
+        _ => format!(
+            "服务器返回错误 retcode={code}：{}。接口可能已变更，请提 Issue",
+            printable(message)
+        ),
     }
 }
 
@@ -77,5 +82,15 @@ mod tests {
             "{text}"
         );
         assert_eq!(error.retcode(), Some(-9999));
+    }
+
+    #[test]
+    fn server_message_is_cleaned_before_display() {
+        let error = ApiError::Retcode {
+            code: -9999,
+            message: "坏\r\u{1b}[2J消息".to_owned(),
+        };
+        let text = error.to_string();
+        assert!(!text.contains('\r') && !text.contains('\u{1b}'), "{text:?}");
     }
 }

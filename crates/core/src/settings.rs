@@ -3,6 +3,7 @@
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
@@ -28,6 +29,16 @@ pub struct ScanSettings {
     pub default_target: TargetKind,
     /// 连续这么多秒没发现登录二维码就停止扫描。
     pub idle_timeout_secs: u64,
+}
+
+/// 超时最短 30 秒。设置成 0 这类值会让扫描一开始就停止。
+pub const MIN_IDLE_TIMEOUT_SECS: u64 = 30;
+
+impl ScanSettings {
+    /// 实际使用的超时时间，不短于 [`MIN_IDLE_TIMEOUT_SECS`]。
+    pub fn idle_timeout(&self) -> Duration {
+        Duration::from_secs(self.idle_timeout_secs.max(MIN_IDLE_TIMEOUT_SECS))
+    }
 }
 
 impl Default for ScanSettings {
@@ -210,5 +221,15 @@ mod tests {
         let text = fs::read_to_string(&path).unwrap();
         assert!(text.contains(r#""default_target": "auto""#), "{text}");
         assert!(text.contains(r#""idle_timeout_secs": 300"#), "{text}");
+    }
+
+    #[test]
+    fn idle_timeout_has_a_floor() {
+        let settings = |secs| ScanSettings {
+            default_target: TargetKind::Auto,
+            idle_timeout_secs: secs,
+        };
+        assert_eq!(settings(0).idle_timeout(), Duration::from_secs(30));
+        assert_eq!(settings(300).idle_timeout(), Duration::from_secs(300));
     }
 }
