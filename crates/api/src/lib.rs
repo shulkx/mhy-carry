@@ -12,4 +12,4 @@ mod login;
 pub use bind::{BindQr, BindStatus, BoundAccount};
 pub use client::ApiClient;
 pub use error::{ApiError, retcode};
-pub use login::{Credentials, ScannedApp};
+pub use login::{Credentials, LoginError, ScannedApp};

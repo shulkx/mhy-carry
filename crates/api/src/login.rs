@@ -2,13 +2,15 @@
 
 use mhy_carry_core::account::{ExposeSecret, SecretString};
 use mhy_carry_core::qr::{LoginQr, PassportTicket, parse_passport_url};
+use mhy_carry_core::scan::Failure;
+use mhy_carry_core::text::printable;
 use reqwest::header::{COOKIE, HeaderMap, HeaderValue};
 use serde::Deserialize;
 use serde::de::IgnoredAny;
 use serde_json::json;
 
 use crate::client::ApiClient;
-use crate::error::ApiError;
+use crate::error::{ApiError, retcode};
 
 /// 米游社 App 的应用 ID。
 const BBS_APP_ID: &str = "bll8iq97cem8";
@@ -34,6 +36,40 @@ pub struct ScannedApp {
 #[derive(Deserialize)]
 struct PandaScanData {
     passport_qr_url: String,
+}
+
+/// 扫码登录失败。
+#[derive(Debug, thiserror::Error)]
+pub enum LoginError {
+    #[error(transparent)]
+    Api(#[from] ApiError),
+    /// 服务器认定的登录目标不是二维码对应的游戏。已经取消，没有调用确认。
+    #[error("服务器说这个二维码是“{app_name}”（{app_id}）的登录码，不是{expected}，已取消登录")]
+    AppMismatch {
+        app_id: String,
+        app_name: String,
+        expected: &'static str,
+    },
+}
+
+/// 把接口错误分成扫码会话需要的几类（设计文档第 10 节）。
+impl From<ApiError> for Failure {
+    fn from(error: ApiError) -> Self {
+        match error.retcode() {
+            Some(retcode::TOKEN_INVALID) => Failure::CredentialInvalid,
+            Some(retcode::QR_EXPIRED) => Failure::QrExpired,
+            _ => Failure::Other(error.to_string()),
+        }
+    }
+}
+
+impl From<LoginError> for Failure {
+    fn from(error: LoginError) -> Self {
+        match error {
+            LoginError::Api(error) => error.into(),
+            LoginError::AppMismatch { app_name, .. } => Failure::AppMismatch { app_name },
+        }
+    }
 }
 
 impl ApiClient {
@@ -111,6 +147,26 @@ impl ApiClient {
         )
         .await?
         .ensure_ok()
+    }
+
+    /// 扫码登录：panda 扫码 → passport 扫码 → 核对应用 → 确认（设计文档第 6.2 节第 6 步）。
+    /// 服务器返回的应用 ID 和二维码对应的游戏对不上时，不调用确认。
+    pub async fn login_with_qr(
+        &self,
+        qr: &LoginQr,
+        credentials: &Credentials<'_>,
+    ) -> Result<(), LoginError> {
+        let ticket = self.panda_scan(qr).await?;
+        let app = self.passport_scan(&ticket, credentials).await?;
+        if app.app_id != qr.game.passport_app_id {
+            return Err(LoginError::AppMismatch {
+                app_id: printable(&app.app_id),
+                app_name: printable(&app.app_name),
+                expected: qr.game.display_name,
+            });
+        }
+        self.passport_confirm(&ticket, credentials).await?;
+        Ok(())
     }
 }
 
@@ -311,5 +367,104 @@ mod tests {
         let text = format!("{error} {error:?}");
         assert!(matches!(error, ApiError::Network(_)), "{text}");
         assert!(!text.contains("v2_secret_stoken"), "{text}");
+    }
+
+    #[tokio::test]
+    async fn login_with_qr_scans_checks_the_app_and_confirms() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/hk4e_cn/combo/panda/qrcode/scan"))
+            .respond_with(ok(json!({
+                "passport_qr_url": format!("https://user.mihoyo.com/login-platform/mobile.html?tk={TK}&token_types=1#/login/qr")
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path(SCAN_PATH))
+            .respond_with(ok(json!({"app_id": "c76ync6mutq8", "app_name": "原神"})))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path(CONFIRM_PATH))
+            .respond_with(ok(json!({})))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let client = ApiClient::for_tests(&server.uri());
+        let stoken = SecretString::from("v2_secret_stoken");
+        let credentials = Credentials {
+            stoken: &stoken,
+            mid: "mid_abc",
+        };
+        client
+            .login_with_qr(&login_qr(), &credentials)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn login_with_qr_never_confirms_a_different_app() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/hk4e_cn/combo/panda/qrcode/scan"))
+            .respond_with(ok(json!({
+                "passport_qr_url": format!("https://user.mihoyo.com/login-platform/mobile.html?tk={TK}&token_types=1#/login/qr")
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path(SCAN_PATH))
+            .respond_with(ok(
+                json!({"app_id": "other_app", "app_name": "崩坏：星穹铁道"}),
+            ))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path(CONFIRM_PATH))
+            .respond_with(ok(json!({})))
+            .expect(0)
+            .mount(&server)
+            .await;
+        let client = ApiClient::for_tests(&server.uri());
+        let stoken = SecretString::from("v2_secret_stoken");
+        let credentials = Credentials {
+            stoken: &stoken,
+            mid: "mid_abc",
+        };
+        let error = client
+            .login_with_qr(&login_qr(), &credentials)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(&error, LoginError::AppMismatch { app_id, .. } if app_id == "other_app"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn errors_are_classified_for_the_scan_session() {
+        let retcode = |code| ApiError::Retcode {
+            code,
+            message: "x".to_owned(),
+        };
+        assert_eq!(Failure::from(retcode(-100)), Failure::CredentialInvalid);
+        assert_eq!(Failure::from(retcode(-3501)), Failure::QrExpired);
+        assert!(matches!(
+            Failure::from(ApiError::Status(500)),
+            Failure::Other(message) if message.contains("500")
+        ));
+        let mismatch = LoginError::AppMismatch {
+            app_id: "other_app".to_owned(),
+            app_name: "崩坏：星穹铁道".to_owned(),
+            expected: "原神",
+        };
+        assert_eq!(
+            Failure::from(mismatch),
+            Failure::AppMismatch {
+                app_name: "崩坏：星穹铁道".to_owned()
+            }
+        );
     }
 }

@@ -50,18 +50,8 @@ pub async fn run(source: QrSource) -> CliResult {
     };
     println!("检查账号凭证……");
     ctx.api.check_stoken(&credentials).await?;
-    println!("扫码……");
-    let ticket = ctx.api.panda_scan(&qr).await?;
-    let app = ctx.api.passport_scan(&ticket, &credentials).await?;
-    if app.app_id != qr.game.passport_app_id {
-        return Err(format!(
-            "服务器说这个二维码是“{}”（{}）的登录码，不是{}，已取消登录",
-            app.app_name, app.app_id, qr.game.display_name
-        )
-        .into());
-    }
-    println!("确认登录……");
-    ctx.api.passport_confirm(&ticket, &credentials).await?;
+    println!("登录中……");
+    ctx.api.login_with_qr(&qr, &credentials).await?;
     println!(
         "登录成功：显示这个二维码的{}已登录你的账号。",
         qr.game.display_name
