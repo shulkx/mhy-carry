@@ -6,10 +6,13 @@
 use mhy_carry_core::capture::{CaptureError, Frame, FrameSource, SourceInfo, SourceKind};
 use mhy_carry_core::games::GameProfile;
 use mhy_carry_core::text::printable;
-use windows::Win32::Foundation::CloseHandle;
+use std::ffi::c_void;
+
+use windows::Win32::Foundation::{CloseHandle, HWND};
 use windows::Win32::System::Threading::{
     OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
 };
+use windows::Win32::UI::WindowsAndMessaging::IsWindow;
 use windows::core::PWSTR;
 use xcap::image::{DynamicImage, RgbaImage};
 use xcap::{Monitor, Window, XCapError};
@@ -181,8 +184,13 @@ impl PickedWindowSource {
 
 impl FrameSource for PickedWindowSource {
     fn next_frame(&mut self) -> Result<Frame, CaptureError> {
-        let window = find_window(self.id)?.ok_or(CaptureError::Gone)?;
-        capture_window(&window)
+        match find_window(self.id)? {
+            Some(window) => capture_window(&window),
+            // xcap 的窗口列表不含隐藏的窗口。窗口还在、只是隐藏了（缩到托盘、在别的
+            // 虚拟桌面上），就当作暂停；真的关了才停止扫描。
+            None if window_exists(self.id) => Err(CaptureError::Minimized),
+            None => Err(CaptureError::Gone),
+        }
     }
 
     fn describe(&self) -> SourceInfo {
@@ -226,6 +234,14 @@ fn find_window(id: u32) -> Result<Option<Window>, CaptureError> {
         .map_err(failed)?
         .into_iter()
         .find(|window| window.id().ok() == Some(id)))
+}
+
+/// 窗口句柄是否还有效，隐藏的窗口也算。
+fn window_exists(id: u32) -> bool {
+    // xcap 的窗口编号是 HWND 截成的 32 位数。窗口句柄只有低 32 位有效，按有符号数扩展回来。
+    let hwnd = HWND(id as i32 as isize as *mut c_void);
+    // SAFETY: IsWindow 只是查询，传入任何值都安全。
+    unsafe { IsWindow(Some(hwnd)).as_bool() }
 }
 
 /// 截窗口所在的那块屏幕区域。窗口最小化时返回 `Minimized`。
@@ -295,5 +311,14 @@ mod tests {
                 luma: vec![0, 255],
             }
         );
+    }
+
+    #[test]
+    fn window_ids_map_back_to_window_handles() {
+        use windows::Win32::UI::WindowsAndMessaging::GetDesktopWindow;
+        // SAFETY: 只是取桌面窗口的句柄。
+        let desktop = unsafe { GetDesktopWindow() };
+        assert!(window_exists(desktop.0 as usize as u32));
+        assert!(!window_exists(0));
     }
 }

@@ -2,7 +2,11 @@
 
 use std::io::{self, BufRead, Write};
 
+use mhy_carry_platform::console;
+
 pub fn confirm(question: &str) -> io::Result<bool> {
+    // 只认看到问题之后敲的回答，提问前多按的 y 回车不算。
+    console::discard_typed_ahead();
     print!("{question} [y/N] ");
     io::stdout().flush()?;
     let mut line = String::new();

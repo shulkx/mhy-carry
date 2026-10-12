@@ -2,5 +2,6 @@
 
 #[cfg(windows)]
 pub mod capture;
+pub mod console;
 pub mod paths;
 pub mod target;

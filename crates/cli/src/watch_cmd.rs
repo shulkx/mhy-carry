@@ -3,6 +3,8 @@
 use std::collections::VecDeque;
 use std::error::Error;
 use std::io::{self, BufRead, Write};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use mhy_carry_api::{ApiClient, ApiError, Credentials};
@@ -67,7 +69,7 @@ pub async fn run(target: Option<TargetKind>) -> CliResult {
     let (mut session, first) = ScanSession::start(
         source.describe(),
         account.masked_uid(),
-        Duration::from_secs(ctx.settings.scan.idle_timeout_secs),
+        ctx.settings.scan.idle_timeout(),
         Box::new(AlwaysAsk),
         Now::current(),
     );
@@ -75,25 +77,33 @@ pub async fn run(target: Option<TargetKind>) -> CliResult {
     let mut printer = Printer::default();
     printer.show(session.status());
 
-    let mut frames = spawn_capture(source);
+    // 检查凭证、等你回答、登录期间不处理画面（设计文档第 6.2 节第 2 步），截图线程也跟着停下。
+    let busy = Arc::new(AtomicBool::new(false));
+    let mut frames = spawn_capture(source, Arc::clone(&busy));
     let mut actions = VecDeque::from([first]);
     loop {
-        while let Some(action) = actions.pop_front() {
-            let event = match action {
-                Action::CheckCredential => {
-                    Event::CredentialChecked(check_credential(&ctx.api, &credentials).await)
-                }
-                Action::Ask(request) => Event::Answered(ask(request).await?),
-                Action::Login(qr) => Event::LoginFinished(
-                    ctx.api
-                        .login_with_qr(&qr, &credentials)
-                        .await
-                        .map_err(Failure::from),
-                ),
-                Action::Finish => return Ok(()),
-            };
-            actions.extend(session.handle(event, Now::current()));
-            printer.show(session.status());
+        if !actions.is_empty() {
+            busy.store(true, Ordering::Relaxed);
+            while let Some(action) = actions.pop_front() {
+                let event = match action {
+                    Action::CheckCredential => {
+                        Event::CredentialChecked(check_credential(&ctx.api, &credentials).await)
+                    }
+                    Action::Ask(request) => Event::Answered(ask(request).await?),
+                    Action::Login(qr) => Event::LoginFinished(
+                        ctx.api
+                            .login_with_qr(&qr, &credentials)
+                            .await
+                            .map_err(Failure::from),
+                    ),
+                    Action::Finish => return Ok(()),
+                };
+                actions.extend(session.handle(event, Now::current()));
+                printer.show(session.status());
+            }
+            busy.store(false, Ordering::Relaxed);
+            // 动作之前截到、还留在通道里的画面已经过时，丢掉，只处理之后截到的。
+            while frames.try_recv().is_ok() {}
         }
         let event = match tokio::time::timeout(TICK, frames.recv()).await {
             Ok(Some(observation)) => Event::Observed(observation),
@@ -173,11 +183,18 @@ fn parse_choice(input: &str, count: usize, default: Option<usize>) -> Option<usi
 }
 
 /// 在单独的线程里截图和识别（设计文档第 6.2 节第 2 步）。结果放进容量为 1 的通道，
-/// 会话来不及处理时直接丢掉这一帧。主循环结束后通道关闭，线程跟着退出。
-fn spawn_capture(mut source: Box<dyn FrameSource + Send>) -> mpsc::Receiver<Observation> {
+/// 会话来不及处理时直接丢掉这一帧。`busy` 为真时不截图。主循环结束后通道关闭，线程跟着退出。
+fn spawn_capture(
+    mut source: Box<dyn FrameSource + Send>,
+    busy: Arc<AtomicBool>,
+) -> mpsc::Receiver<Observation> {
     let (sender, receiver) = mpsc::channel(1);
     std::thread::spawn(move || {
-        loop {
+        while !sender.is_closed() {
+            if busy.load(Ordering::Relaxed) {
+                std::thread::sleep(FRAME_INTERVAL);
+                continue;
+            }
             let started = Instant::now();
             let observation = observe(source.as_mut(), &RxingDecoder);
             let interval = if observation == Observation::TargetMissing {
@@ -185,9 +202,8 @@ fn spawn_capture(mut source: Box<dyn FrameSource + Send>) -> mpsc::Receiver<Obse
             } else {
                 FRAME_INTERVAL
             };
-            if let Err(mpsc::error::TrySendError::Closed(_)) = sender.try_send(observation) {
-                return;
-            }
+            // 通道满了就丢掉这一帧；通道关了，下一轮循环会退出。
+            let _ = sender.try_send(observation);
             if let Some(rest) = interval.checked_sub(started.elapsed()) {
                 std::thread::sleep(rest);
             }
