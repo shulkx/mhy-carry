@@ -44,7 +44,8 @@ pub fn process_path(pid: u32) -> Option<String> {
 /// 一个可以选来扫描的窗口。
 #[derive(Debug, Clone)]
 pub struct WindowTarget {
-    id: u32,
+    /// 窗口句柄或显示器编号。开始扫描时用它找回你选的目标。
+    pub id: u32,
     /// “标题（进程名）”。
     pub label: String,
 }
@@ -52,7 +53,8 @@ pub struct WindowTarget {
 /// 一个可以选来扫描的显示器。
 #[derive(Debug, Clone)]
 pub struct MonitorTarget {
-    id: u32,
+    /// 窗口句柄或显示器编号。开始扫描时用它找回你选的目标。
+    pub id: u32,
     /// “显示器 名称（宽×高）”。
     pub label: String,
     pub is_primary: bool,

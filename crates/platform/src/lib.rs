@@ -3,5 +3,7 @@
 #[cfg(windows)]
 pub mod capture;
 pub mod console;
+#[cfg(windows)]
+pub mod dialog;
 pub mod paths;
 pub mod target;
