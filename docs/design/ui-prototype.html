@@ -1,0 +1,704 @@
+<!-- MhyCarry 界面原型（2026-10-13 和用户确认）。只是设计参考，不是正式代码；里面的账号、窗口名都是示例，绑定二维码是不能扫的示意图。
+     直接用浏览器打开即可，左边点击切换状态。设计说明见 2026-10-11-mhy-carry-design.md 第 6.3 节。 -->
+<title>MhyCarry 界面原型</title>
+<style>
+/* 布局：左边是原型控制栏（切换状态），右边是按真实尺寸画的 440×640 应用窗口。
+   字体只用系统字体：正式应用的 CSP 不允许加载外部资源。 */
+:root {
+  --page: #e9edf1;
+  --window: #ffffff;
+  --sunken: #f3f5f8;
+  --ink: #1b2430;
+  --muted: #5b6878;
+  --line: #d6dde5;
+  --accent: #2d6a99;
+  --accent-ink: #ffffff;
+  --accent-soft: #e3eef7;
+  --ok: #2b7a4b;
+  --warn: #a8701a;
+  --bad: #b8392c;
+  --idle: #8793a1;
+  --titlebar: #e4e9ee;
+  --shadow: 0 18px 40px rgba(24, 38, 56, 0.18);
+  --font-ui: "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "Cascadia Mono", Consolas, "SFMono-Regular", monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --page: #101418;
+    --window: #1a2027;
+    --sunken: #212932;
+    --ink: #e4e9ef;
+    --muted: #9aa6b3;
+    --line: #2e3842;
+    --accent: #6ea8d8;
+    --accent-ink: #0c1621;
+    --accent-soft: #1f3243;
+    --ok: #5cc08a;
+    --warn: #dcae52;
+    --bad: #ee7b6d;
+    --idle: #7c8997;
+    --titlebar: #151a20;
+    --shadow: 0 18px 40px rgba(0, 0, 0, 0.45);
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page: #101418;
+  --window: #1a2027;
+  --sunken: #212932;
+  --ink: #e4e9ef;
+  --muted: #9aa6b3;
+  --line: #2e3842;
+  --accent: #6ea8d8;
+  --accent-ink: #0c1621;
+  --accent-soft: #1f3243;
+  --ok: #5cc08a;
+  --warn: #dcae52;
+  --bad: #ee7b6d;
+  --idle: #7c8997;
+  --titlebar: #151a20;
+  --shadow: 0 18px 40px rgba(0, 0, 0, 0.45);
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--page);
+  color: var(--ink);
+  font-family: var(--font-ui);
+  font-size: 14px;
+  line-height: 1.55;
+  padding: 24px 16px 40px;
+}
+button, select, input { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.layout {
+  max-width: 1040px;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: minmax(220px, 300px) 1fr;
+  gap: 32px;
+  align-items: start;
+}
+@media (max-width: 760px) {
+  .layout { grid-template-columns: 1fr; }
+}
+
+/* ---- 原型控制栏 ---- */
+.controls h1 {
+  font-size: 20px;
+  margin: 0 0 4px;
+  text-wrap: balance;
+}
+.controls .lead { color: var(--muted); margin: 0 0 20px; }
+.group { display: grid; gap: 6px; margin-bottom: 18px; }
+.group-label {
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+.scenarios { display: flex; flex-wrap: wrap; gap: 6px; }
+.scenario {
+  border: 1px solid var(--line);
+  background: var(--window);
+  border-radius: 6px;
+  padding: 4px 10px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.scenario[aria-pressed="true"] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+.note {
+  margin-top: 8px;
+  padding: 10px 12px;
+  border-left: 3px solid var(--accent);
+  background: var(--sunken);
+  color: var(--muted);
+  font-size: 13px;
+}
+
+/* ---- 应用窗口 ---- */
+.stage { position: relative; display: flex; justify-content: center; }
+.window {
+  width: 440px;
+  max-width: 100%;
+  height: 640px;
+  background: var(--window);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.titlebar {
+  height: 32px;
+  flex: none;
+  background: var(--titlebar);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-left: 12px;
+  font-size: 12px;
+  user-select: none;
+}
+.titlebar .mark {
+  width: 14px; height: 14px;
+  border: 2px solid var(--accent);
+  border-radius: 3px;
+  position: relative;
+}
+.titlebar .mark::after {
+  content: "";
+  position: absolute;
+  inset: 3px;
+  background: var(--accent);
+}
+.titlebar .caps { margin-left: auto; display: flex; }
+.titlebar .caps span {
+  width: 44px; height: 32px;
+  display: grid; place-items: center;
+  color: var(--muted);
+}
+.content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 18px 20px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.section-label {
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+
+/* 账号 */
+.account-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.uid {
+  font-size: 22px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+}
+.meta { color: var(--muted); font-size: 13px; }
+.badge {
+  font-size: 12px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+}
+.badge.unchecked { color: var(--idle); }
+.badge.valid { color: var(--ok); }
+.badge.invalid { color: var(--bad); }
+.actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+.btn {
+  border: 1px solid var(--line);
+  background: var(--window);
+  border-radius: 6px;
+  padding: 5px 14px;
+  cursor: pointer;
+}
+.btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.btn.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+.btn.danger { color: var(--bad); }
+.btn.big { width: 100%; padding: 10px; font-size: 16px; font-weight: 600; }
+.message { font-size: 13px; padding: 8px 10px; background: var(--sunken); border-radius: 6px; }
+.message.bad { color: var(--bad); }
+.message.ok { color: var(--ok); }
+
+.bind {
+  display: grid;
+  grid-template-columns: 132px 1fr;
+  gap: 14px;
+  align-items: center;
+}
+.bind canvas {
+  width: 132px; height: 132px;
+  background: #ffffff;
+  border: 1px solid var(--line);
+  image-rendering: pixelated;
+}
+.bind .caption { font-size: 12px; color: var(--muted); }
+.bind .step { font-size: 15px; font-weight: 600; }
+
+/* 扫描 */
+.scan {
+  border-top: 1px solid var(--line);
+  padding-top: 16px;
+  display: grid;
+  gap: 12px;
+}
+.segmented {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.segmented button {
+  border: 0;
+  background: var(--window);
+  padding: 6px 0;
+  cursor: pointer;
+}
+.segmented button + button { border-left: 1px solid var(--line); }
+.segmented button[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.segmented button:disabled { cursor: not-allowed; opacity: 0.6; }
+.target-pick { display: flex; gap: 8px; }
+.target-pick select {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--window);
+  padding: 5px 8px;
+}
+.status {
+  display: grid;
+  grid-template-columns: 12px 1fr;
+  gap: 10px;
+  align-items: start;
+  background: var(--sunken);
+  border-radius: 8px;
+  padding: 12px 14px;
+  min-height: 74px;
+}
+.dot { width: 12px; height: 12px; border-radius: 50%; margin-top: 6px; background: var(--idle); }
+.dot.scanning { background: var(--accent); animation: pulse 1.6s ease-in-out infinite; }
+.dot.waiting { background: var(--warn); }
+.dot.ok { background: var(--ok); }
+.dot.bad { background: var(--bad); }
+@keyframes pulse { 50% { opacity: 0.35; } }
+@media (prefers-reduced-motion: reduce) { .dot.scanning { animation: none; } }
+.status-text { font-size: 16px; font-weight: 600; text-wrap: balance; }
+.notice { font-size: 13px; color: var(--muted); margin-top: 4px; }
+.notice time { font-variant-numeric: tabular-nums; margin-right: 6px; }
+
+/* 设置和页脚 */
+details.settings { border-top: 1px solid var(--line); padding-top: 12px; }
+details.settings summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+.settings-grid {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 8px 12px;
+  align-items: center;
+  margin-top: 10px;
+  font-size: 13px;
+}
+.settings-grid select, .settings-grid input {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--window);
+  padding: 4px 8px;
+}
+.settings-grid input { width: 90px; font-variant-numeric: tabular-nums; }
+.footer {
+  flex: none;
+  border-top: 1px solid var(--line);
+  padding: 8px 20px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.footer code { font-family: var(--font-mono); font-size: 11.5px; word-break: break-all; }
+
+/* 系统确认框（示意 Windows MessageBox，置顶，默认按钮是“否”） */
+.msgbox {
+  position: absolute;
+  top: 210px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 400px;
+  max-width: calc(100% - 24px);
+  background: #ffffff;
+  color: #1b1b1b;
+  border: 1px solid #8a8a8a;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+  font-size: 13px;
+}
+.msgbox .mb-title { padding: 6px 10px; font-size: 12px; border-bottom: 1px solid #e3e3e3; }
+.msgbox .mb-body { display: grid; grid-template-columns: 32px 1fr; gap: 12px; padding: 16px 16px 20px; }
+.msgbox .mb-icon {
+  width: 32px; height: 32px;
+  clip-path: polygon(50% 4%, 97% 94%, 3% 94%);
+  background: #f2c037;
+  display: grid; place-items: center;
+  font-weight: 700; padding-top: 8px;
+}
+.msgbox .mb-buttons {
+  background: #f0f0f0;
+  padding: 10px 12px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.msgbox .mb-buttons button {
+  min-width: 74px;
+  padding: 3px 10px;
+  background: #e1e1e1;
+  border: 1px solid #adadad;
+  color: #1b1b1b;
+}
+.msgbox .mb-buttons button.default { border: 2px solid #0078d7; }
+.msgbox-caption {
+  position: absolute;
+  top: 180px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 12px;
+  color: var(--muted);
+  background: var(--page);
+  padding: 2px 8px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+</style>
+
+<div class="layout">
+  <aside class="controls">
+    <h1>MhyCarry 界面原型</h1>
+    <p class="lead">点击下面的状态，看右边窗口在每种情况下的样子。窗口按 440×640 绘制，里面的账号、窗口名都是示例。</p>
+    <div id="groups"></div>
+    <p class="note" id="scenario-note"></p>
+  </aside>
+
+  <main class="stage">
+    <div class="window" role="region" aria-label="MhyCarry 窗口">
+      <div class="titlebar">
+        <span class="mark" aria-hidden="true"></span>
+        <span>MhyCarry</span>
+        <span class="caps" aria-hidden="true"><span>—</span><span>☐</span><span>✕</span></span>
+      </div>
+      <div class="content">
+        <section aria-labelledby="account-label">
+          <div class="section-label" id="account-label">账号</div>
+          <div id="account"></div>
+        </section>
+
+        <section class="scan" aria-labelledby="scan-label">
+          <div class="section-label" id="scan-label">扫描</div>
+          <div class="segmented" role="group" aria-label="截图目标">
+            <button type="button" id="target-auto" data-target="auto">自动</button>
+            <button type="button" id="target-window" data-target="window">指定窗口</button>
+            <button type="button" id="target-monitor" data-target="monitor">显示器</button>
+          </div>
+          <div class="target-pick" id="target-pick">
+            <select id="target-select" aria-label="选择截图目标"></select>
+            <button type="button" class="btn" id="target-refresh">刷新</button>
+          </div>
+          <button type="button" class="btn primary big" id="scan-button"></button>
+          <div class="status" aria-live="polite">
+            <span class="dot" id="status-dot" aria-hidden="true"></span>
+            <div>
+              <div class="status-text" id="status-text"></div>
+              <div class="notice" id="status-notice"></div>
+            </div>
+          </div>
+        </section>
+
+        <details class="settings">
+          <summary>设置</summary>
+          <div class="settings-grid">
+            <label for="setting-target">默认截图目标</label>
+            <select id="setting-target">
+              <option>自动找原神窗口</option>
+              <option>指定窗口</option>
+              <option>显示器</option>
+            </select>
+            <label for="setting-timeout">无二维码自动停止</label>
+            <span><input id="setting-timeout" type="number" min="30" step="30" value="300"> 秒（最少 30）</span>
+          </div>
+        </details>
+      </div>
+      <div class="footer" id="footer"></div>
+    </div>
+    <div id="msgbox-layer"></div>
+  </main>
+</div>
+
+<script>
+const UID = "300012345";
+const WINDOWS = ["原神（YuanShen.exe）", "直播间 - Microsoft Edge（msedge.exe）", "更好的原神（BetterGI.exe）"];
+const MONITORS = ["显示器 DELL U2720Q（3840×2160）主显示器", "显示器 LG 24MK600（1920×1080）"];
+const FILE_NOTE = "凭证明文保存在 %LOCALAPPDATA%\\MhyCarry\\accounts.json";
+
+// 每个场景描述一份完整状态，和设计文档第 6.3 节的状态快照一一对应。
+const SCENARIOS = [
+  { group: "账号", id: "unbound", label: "未绑定",
+    account: { kind: "none" }, scan: { kind: "idle" },
+    note: "没绑定账号时不能开始扫描。" },
+  { group: "账号", id: "bound", label: "已绑定",
+    account: { kind: "bound", credential: "unchecked" }, scan: { kind: "idle" },
+    note: "凭证只在开始扫描时检查，打开程序时不联网，所以凭证状态是“未检查”。uid 完整显示。" },
+  { group: "账号", id: "invalid", label: "凭证已失效",
+    account: { kind: "bound", credential: "invalid", leftovers: 1 },
+    scan: { kind: "idle", stop: { text: "账号凭证已失效，请重新绑定", tone: "bad" } },
+    note: "扫描时发现凭证失效会停止，账号标记为已失效。还演示了“有残留备份”时的提示。" },
+  { group: "账号", id: "newer", label: "账号文件格式更新",
+    account: { kind: "newer" }, scan: { kind: "idle" },
+    note: "账号文件来自更新版本的 MhyCarry，只读，绑定和解绑都不可用。" },
+
+  { group: "绑定", id: "bind-wait", label: "等待扫码",
+    account: { kind: "binding", step: "wait" }, scan: { kind: "idle" },
+    note: "绑定时这一块变成二维码。扫描和绑定不能同时进行。" },
+  { group: "绑定", id: "bind-scanned", label: "已扫码待确认",
+    account: { kind: "binding", step: "scanned" }, scan: { kind: "idle" } },
+  { group: "绑定", id: "bind-expired", label: "二维码过期",
+    account: { kind: "binding", step: "expired" }, scan: { kind: "idle" } },
+  { group: "绑定", id: "bind-done", label: "绑定成功",
+    account: { kind: "bound", credential: "unchecked", message: { text: "绑定成功", tone: "ok" } },
+    scan: { kind: "idle" } },
+
+  { group: "扫描", id: "checking", label: "检查凭证",
+    account: { kind: "bound", credential: "unchecked" }, scan: { kind: "checking" } },
+  { group: "扫描", id: "waiting", label: "等待原神窗口",
+    account: { kind: "bound", credential: "valid" }, scan: { kind: "waiting" } },
+  { group: "扫描", id: "background", label: "原神不在最前面",
+    account: { kind: "bound", credential: "valid" }, scan: { kind: "background" },
+    note: "自动模式截的是原神窗口所在的屏幕区域，只在原神是最前面的窗口时扫描。" },
+  { group: "扫描", id: "paused", label: "窗口最小化",
+    account: { kind: "bound", credential: "valid" }, scan: { kind: "paused" } },
+  { group: "扫描", id: "scanning", label: "扫描中",
+    account: { kind: "bound", credential: "valid" }, scan: { kind: "scanning" } },
+  { group: "扫描", id: "multiple", label: "多个登录码",
+    account: { kind: "bound", credential: "valid" },
+    scan: { kind: "scanning", notice: "画面里有多个登录二维码，无法确定要登录哪一个" },
+    note: "提示不会让扫描停下，画面里只剩一个码时才会问你。" },
+  { group: "扫描", id: "picked", label: "指定窗口扫描中",
+    account: { kind: "bound", credential: "valid" }, scan: { kind: "scanning", target: "window" } },
+  { group: "扫描", id: "confirm", label: "等你确认",
+    account: { kind: "bound", credential: "valid" }, scan: { kind: "confirm" },
+    note: "确认框由 Rust 端直接弹出系统对话框：置顶，盖在游戏上面；默认按钮是“否”，误按回车不会登录；同时闪任务栏、响提示音。" },
+  { group: "扫描", id: "logging-in", label: "正在登录",
+    account: { kind: "bound", credential: "valid" }, scan: { kind: "logging-in" } },
+
+  { group: "结束", id: "success", label: "登录成功",
+    account: { kind: "bound", credential: "valid" },
+    scan: { kind: "idle", stop: { text: "登录成功，显示二维码的原神已登录你的账号", tone: "ok" } } },
+  { group: "结束", id: "timeout", label: "超时停止",
+    account: { kind: "bound", credential: "valid" },
+    scan: { kind: "idle", stop: { text: "连续 300 秒没发现登录二维码", tone: "idle" } } },
+  { group: "结束", id: "expired-notice", label: "二维码过期（继续扫描）",
+    account: { kind: "bound", credential: "valid" },
+    scan: { kind: "scanning", notice: "二维码已过期或已被使用，等游戏刷新" } },
+  { group: "结束", id: "mismatch", label: "应用不符（继续扫描）",
+    account: { kind: "bound", credential: "valid" },
+    scan: { kind: "scanning", notice: "服务器说这是“崩坏：星穹铁道”的登录码，不是原神，已取消" } },
+  { group: "结束", id: "gone", label: "指定窗口已关闭",
+    account: { kind: "bound", credential: "valid" },
+    scan: { kind: "idle", target: "window", stop: { text: "指定的窗口已关闭，或指定的显示器已断开", tone: "bad" } } },
+];
+
+const $ = (id) => document.getElementById(id);
+let current = SCENARIOS[1];
+let target = "auto";
+let timer = null;
+
+function el(tag, attrs = {}, text) {
+  const node = document.createElement(tag);
+  for (const [key, value] of Object.entries(attrs)) node.setAttribute(key, value);
+  if (text !== undefined) node.textContent = text;
+  return node;
+}
+
+function renderControls() {
+  const groups = $("groups");
+  groups.replaceChildren();
+  for (const name of [...new Set(SCENARIOS.map((s) => s.group))]) {
+    const box = el("div", { class: "group" });
+    box.append(el("div", { class: "group-label" }, name));
+    const row = el("div", { class: "scenarios" });
+    for (const scenario of SCENARIOS.filter((s) => s.group === name)) {
+      const button = el("button", { type: "button", class: "scenario", id: "scenario-" + scenario.id,
+        "aria-pressed": String(scenario === current) }, scenario.label);
+      button.addEventListener("click", () => show(scenario));
+      row.append(button);
+    }
+    box.append(row);
+    groups.append(box);
+  }
+  $("scenario-note").textContent = current.note || "数据都是示例：账号 " + UID + "，窗口名和显示器名也是编的。";
+}
+
+function drawFakeQr(canvas) {
+  // 只是示意图：随机方块加三个定位角，不是真的二维码，扫不出东西。
+  const n = 25, ctx = canvas.getContext("2d");
+  canvas.width = n; canvas.height = n;
+  ctx.fillStyle = "#ffffff"; ctx.fillRect(0, 0, n, n);
+  ctx.fillStyle = "#111111";
+  let seed = 7;
+  const rand = () => (seed = (seed * 9301 + 49297) % 233280) / 233280;
+  for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) if (rand() > 0.55) ctx.fillRect(x, y, 1, 1);
+  for (const [fx, fy] of [[1, 1], [n - 8, 1], [1, n - 8]]) {
+    ctx.fillStyle = "#ffffff"; ctx.fillRect(fx - 1, fy - 1, 9, 9);
+    ctx.fillStyle = "#111111"; ctx.fillRect(fx, fy, 7, 7);
+    ctx.fillStyle = "#ffffff"; ctx.fillRect(fx + 1, fy + 1, 5, 5);
+    ctx.fillStyle = "#111111"; ctx.fillRect(fx + 2, fy + 2, 3, 3);
+  }
+}
+
+function renderAccount(account) {
+  const box = $("account");
+  box.replaceChildren();
+  const busy = ["checking", "waiting", "background", "paused", "scanning", "confirm", "logging-in"].includes(current.scan.kind);
+
+  if (account.kind === "none") {
+    box.append(el("div", { class: "meta" }, "还没有绑定账号。用米游社 App 扫码绑定后，就能用这个账号确认游戏登录。"));
+    const actions = el("div", { class: "actions" });
+    actions.append(el("button", { type: "button", class: "btn primary", id: "bind-start" }, "用米游社扫码绑定"));
+    box.append(actions);
+  } else if (account.kind === "newer") {
+    box.append(el("div", { class: "message bad" },
+      "账号文件来自更新版本的 MhyCarry（format=2），为免损坏，本程序不会修改它。请换用新版本。"));
+    const actions = el("div", { class: "actions" });
+    actions.append(el("button", { type: "button", class: "btn", disabled: "" }, "绑定"),
+                   el("button", { type: "button", class: "btn danger", disabled: "" }, "解绑"));
+    box.append(actions);
+  } else if (account.kind === "binding") {
+    const wrap = el("div", { class: "bind" });
+    const qr = el("div");
+    const canvas = el("canvas", { "aria-label": "绑定二维码（示意图）" });
+    drawFakeQr(canvas);
+    qr.append(canvas, el("div", { class: "caption" }, "示意图，不能扫"));
+    const side = el("div");
+    const steps = {
+      wait: ["用米游社 App 扫描左边的二维码", "扫码后在手机上确认登录。"],
+      scanned: ["已扫码，请在手机上确认", "确认后自动保存账号。"],
+      expired: ["二维码已过期", "点“刷新”换一个新的二维码。"],
+    }[account.step];
+    side.append(el("div", { class: "step" }, steps[0]), el("div", { class: "meta" }, steps[1]));
+    const actions = el("div", { class: "actions" });
+    if (account.step === "expired") actions.append(el("button", { type: "button", class: "btn primary" }, "刷新"));
+    actions.append(el("button", { type: "button", class: "btn" }, "取消"));
+    side.append(actions);
+    wrap.append(qr, side);
+    box.append(wrap);
+  } else {
+    const row = el("div", { class: "account-row" });
+    const labels = { unchecked: "凭证未检查", valid: "凭证有效", invalid: "凭证已失效" };
+    row.append(el("span", { class: "uid" }, UID),
+               el("span", { class: "badge " + account.credential }, labels[account.credential]));
+    box.append(row, el("div", { class: "meta" }, "绑定于 2026-10-12"));
+    if (account.message) box.append(el("div", { class: "message " + account.message.tone }, account.message.text));
+    if (account.credential === "invalid") {
+      box.append(el("div", { class: "message bad" }, "这个账号的登录状态已失效，重新绑定后才能继续使用。"));
+    }
+    const actions = el("div", { class: "actions" });
+    const rebind = el("button", { type: "button", class: account.credential === "invalid" ? "btn primary" : "btn" }, "重新绑定");
+    const unbind = el("button", { type: "button", class: "btn danger" }, "解绑");
+    if (busy) { rebind.disabled = true; unbind.disabled = true; }
+    actions.append(rebind, unbind);
+    box.append(actions);
+  }
+
+  const footer = $("footer");
+  footer.replaceChildren();
+  const code = el("code", {}, FILE_NOTE.replace("凭证明文保存在 ", ""));
+  footer.append("凭证明文保存在 ", code, "，解绑会删除它。");
+  if (account.leftovers) footer.append(el("div", {}, "另有 " + account.leftovers + " 个旧账号文件（账号文件损坏时留下的备份），解绑时一并删除。"));
+}
+
+function statusOf(scan) {
+  const source = (scan.target || target) === "window" ? WINDOWS[1] : (scan.target || target) === "monitor" ? MONITORS[0] : "YuanShen.exe（原神）";
+  switch (scan.kind) {
+    case "idle": return scan.stop ? { dot: scan.stop.tone === "ok" ? "ok" : scan.stop.tone === "bad" ? "bad" : "", text: "已停止：" + scan.stop.text } : { dot: "", text: "未在扫描" };
+    case "checking": return { dot: "waiting", text: "检查账号凭证…" };
+    case "waiting": return { dot: "waiting", text: "等待原神窗口…" };
+    case "background": return { dot: "waiting", text: "原神不在最前面，切回游戏后继续" };
+    case "paused": return { dot: "waiting", text: "窗口已最小化，恢复后继续" };
+    case "scanning": return { dot: "scanning", text: "正在扫描 " + source, notice: scan.notice };
+    case "confirm": return { dot: "waiting", text: "等你确认是否登录" };
+    case "logging-in": return { dot: "scanning", text: "正在登录…" };
+  }
+}
+
+function renderScan(scan) {
+  const effectiveTarget = scan.target || target;
+  for (const name of ["auto", "window", "monitor"]) {
+    const button = $("target-" + name);
+    button.setAttribute("aria-pressed", String(name === effectiveTarget));
+    button.disabled = scan.kind !== "idle";
+  }
+  const pick = $("target-pick");
+  pick.hidden = effectiveTarget === "auto";
+  const select = $("target-select");
+  select.replaceChildren(...(effectiveTarget === "monitor" ? MONITORS : WINDOWS).map((text) => el("option", {}, text)));
+  if (effectiveTarget === "window") select.selectedIndex = 1;
+  select.disabled = scan.kind !== "idle";
+  $("target-refresh").disabled = scan.kind !== "idle";
+
+  const button = $("scan-button");
+  const accountReady = current.account.kind === "bound" && current.account.credential !== "invalid";
+  if (scan.kind === "idle") {
+    button.textContent = "开始扫描";
+    button.disabled = !accountReady;
+    button.title = accountReady ? "" : "先绑定账号";
+  } else {
+    button.textContent = "停止";
+    button.disabled = scan.kind === "logging-in";
+    button.title = scan.kind === "logging-in" ? "登录请求已经发出，等结果出来" : "";
+  }
+
+  const status = statusOf(scan);
+  $("status-dot").className = "dot " + status.dot;
+  $("status-text").textContent = status.text;
+  const notice = $("status-notice");
+  notice.replaceChildren();
+  if (status.notice) notice.append(el("time", {}, "21:04:37"), "提示：" + status.notice);
+  else if (scan.kind === "idle" && !accountReady && current.account.kind !== "binding") notice.textContent = "绑定账号后才能开始扫描。";
+  else if (scan.kind === "idle" && current.account.kind === "binding") notice.textContent = "绑定完成前不能开始扫描。";
+
+  const layer = $("msgbox-layer");
+  layer.replaceChildren();
+  if (scan.kind === "confirm") {
+    layer.append(el("div", { class: "msgbox-caption" }, "系统确认框（置顶，实际会盖在游戏上面）"));
+    const box = el("div", { class: "msgbox", role: "dialog", "aria-label": "MhyCarry 登录确认" });
+    box.append(el("div", { class: "mb-title" }, "MhyCarry"));
+    const body = el("div", { class: "mb-body" });
+    body.append(el("div", { class: "mb-icon", "aria-hidden": "true" }, "!"),
+      el("div", {}, "在 YuanShen.exe（原神）中发现原神登录二维码。用账号 " + UID + " 登录？确认后，显示这个二维码的设备将登录你的账号。"));
+    const buttons = el("div", { class: "mb-buttons" });
+    buttons.append(el("button", { type: "button" }, "是(Y)"), el("button", { type: "button", class: "default" }, "否(N)"));
+    box.append(body, buttons);
+    layer.append(box);
+  }
+}
+
+// 从左边点场景时用场景自己的截图目标；窗口里的演示流程沿用你当前选的目标。
+function show(scenario, keepTarget = false) {
+  clearTimeout(timer);
+  current = scenario;
+  if (!keepTarget) target = scenario.scan.target || "auto";
+  renderControls();
+  renderAccount(scenario.account);
+  renderScan(scenario.scan);
+}
+
+// 窗口里的按钮也能点，演示最常见的一条路：开始 → 检查凭证 → 扫描中 → 停止。
+$("scan-button").addEventListener("click", () => {
+  const byId = (id) => SCENARIOS.find((s) => s.id === id);
+  if (current.scan.kind === "idle") {
+    show(byId("checking"), true);
+    timer = setTimeout(() => show(target === "auto" ? byId("waiting") : byId("scanning"), true), 900);
+  } else {
+    show({ group: "", id: "stopped", label: "", account: { kind: "bound", credential: "valid" },
+      scan: { kind: "idle", stop: { text: "你手动停止了扫描", tone: "idle" } } }, true);
+  }
+});
+for (const name of ["auto", "window", "monitor"]) {
+  $("target-" + name).addEventListener("click", () => { target = name; renderScan(current.scan); });
+}
+
+show(current);
+</script>
