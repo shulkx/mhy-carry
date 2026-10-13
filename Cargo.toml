@@ -15,6 +15,7 @@ publish = false
 mhy-carry-core = { path = "crates/core" }
 mhy-carry-api = { path = "crates/api" }
 mhy-carry-platform = { path = "crates/platform" }
+mhy-carry-runner = { path = "crates/runner" }
 
 clap = { version = "4.6", features = ["derive"] }
 dirs = "7"

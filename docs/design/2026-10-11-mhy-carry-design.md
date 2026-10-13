@@ -68,6 +68,7 @@ mhy-carry/
 │  ├─ core/                mhy-carry-core：纯逻辑，不访问网络，不调用操作系统 API
 │  ├─ api/                 mhy-carry-api：米哈游接口客户端
 │  ├─ platform/            mhy-carry-platform：窗口枚举、截图、数据目录
+│  ├─ runner/              mhy-carry-runner：扫码会话的运行循环，cli 和 app 共用
 │  └─ cli/                 mhy-carry-cli：命令行工具，用来验证协议和调试
 ├─ app/
 │  ├─ src-tauri/           mhy-carry：Tauri 应用（Rust 端）
@@ -76,7 +77,7 @@ mhy-carry/
 └─ .github/workflows/      ci.yml、release.yml
 ```
 
-依赖关系是单向的：`app`、`cli` 依赖 `api`、`platform`，它们再依赖 `core`。`core` 不依赖其他任何单元，也不依赖任何平台相关的库。
+依赖关系是单向的：`app`、`cli` 依赖 `runner`、`api`、`platform`；`runner` 依赖 `api` 和 `core`；`api`、`platform` 再依赖 `core`。`core` 不依赖其他任何单元，也不依赖任何平台相关的库。
 
 命名约定：
 - 仓库、目录和 Cargo 包名用小写加连字符（`mhy-carry-core`）。
