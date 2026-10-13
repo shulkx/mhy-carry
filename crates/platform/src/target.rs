@@ -38,6 +38,15 @@ pub fn is_listed_exe(exe: &str, names: &[&str]) -> bool {
     names.iter().any(|name| name.eq_ignore_ascii_case(exe))
 }
 
+/// 宽或高小于这个值的窗口（输入法状态栏、托盘弹出框这类）放不下能识别的二维码，
+/// 不列给你选。单位是物理像素。
+pub const MIN_LISTED_SIDE: u32 = 200;
+
+/// 这个窗口要不要列给你选。最小化的窗口量出来的尺寸不准，照样列出。
+pub fn worth_listing(width: u32, height: u32, minimized: bool) -> bool {
+    minimized || (width >= MIN_LISTED_SIDE && height >= MIN_LISTED_SIDE)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -141,5 +150,20 @@ mod tests {
         assert!(is_listed_exe("yuanshen.EXE", &["YuanShen.exe"]));
         assert!(!is_listed_exe("YuanShen.exe.bak", &["YuanShen.exe"]));
         assert!(!is_listed_exe("GenshinImpact.exe", &["YuanShen.exe"]));
+    }
+
+    #[test]
+    fn small_windows_are_not_listed() {
+        // 输入法状态栏这类窗口。
+        assert!(!worth_listing(150, 40, false));
+        // 只要有一边太窄就不列。
+        assert!(!worth_listing(1920, 120, false));
+        assert!(worth_listing(MIN_LISTED_SIDE, MIN_LISTED_SIDE, false));
+        assert!(worth_listing(1922, 1126, false));
+    }
+
+    #[test]
+    fn minimized_windows_are_listed_whatever_their_size() {
+        assert!(worth_listing(160, 28, true));
     }
 }

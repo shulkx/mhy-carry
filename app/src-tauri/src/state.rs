@@ -111,7 +111,8 @@ pub fn track_notice(
     }
 }
 
-/// 绑定流程（设计文档第 6.1、6.3 节）。结束状态一直显示，直到再次绑定或点关闭。
+/// 绑定流程（设计文档第 6.1、6.3 节）。绑定成功几秒后自动收起；其他结束状态一直显示，
+/// 直到再次绑定或点关闭。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum BindView {

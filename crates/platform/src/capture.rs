@@ -4,7 +4,7 @@
 //! 显示器断开了，都能马上发现。
 
 use mhy_carry_core::capture::{CaptureError, Frame, FrameSource, SourceInfo, SourceKind};
-use mhy_carry_core::games::GameProfile;
+use mhy_carry_core::games::{GAMES, GameProfile};
 use mhy_carry_core::text::printable;
 use std::ffi::c_void;
 
@@ -17,7 +17,7 @@ use windows::core::PWSTR;
 use xcap::image::{DynamicImage, RgbaImage};
 use xcap::{Monitor, Window, XCapError};
 
-use crate::target::{Rect, exe_name, is_listed_exe, visible_region};
+use crate::target::{Rect, exe_name, is_listed_exe, visible_region, worth_listing};
 
 /// 进程 exe 的完整路径。
 ///
@@ -48,6 +48,8 @@ pub struct WindowTarget {
     pub id: u32,
     /// “标题（进程名）”。
     pub label: String,
+    /// 是游戏窗口（进程名在 [`GAMES`] 里）。
+    pub is_game: bool,
 }
 
 /// 一个可以选来扫描的显示器。
@@ -60,8 +62,10 @@ pub struct MonitorTarget {
     pub is_primary: bool,
 }
 
-/// 列出有标题的可见窗口，给你选“指定窗口”。最小化的窗口也在里面。
+/// 列出有标题的可见窗口，给你选“指定窗口”。最小化的窗口也在里面；太小的窗口和
+/// 本程序自己的窗口不在里面。游戏窗口排在最前面。
 pub fn list_windows() -> Result<Vec<WindowTarget>, CaptureError> {
+    let own_pid = std::process::id();
     let mut targets = Vec::new();
     for window in Window::all().map_err(failed)? {
         let title = window.title().unwrap_or_default();
@@ -71,17 +75,31 @@ pub fn list_windows() -> Result<Vec<WindowTarget>, CaptureError> {
         let Ok(id) = window.id() else {
             continue;
         };
-        let exe = window
-            .pid()
-            .ok()
+        let pid = window.pid().ok();
+        if pid == Some(own_pid) {
+            continue;
+        }
+        let minimized = window.is_minimized().unwrap_or(false);
+        let width = window.width().unwrap_or(0);
+        let height = window.height().unwrap_or(0);
+        if !worth_listing(width, height, minimized) {
+            continue;
+        }
+        let exe = pid
             .and_then(process_path)
             .map(|path| exe_name(&path).to_owned())
             .unwrap_or_default();
+        let is_game = GAMES
+            .iter()
+            .any(|game| is_listed_exe(&exe, game.process_names));
         targets.push(WindowTarget {
             id,
             label: printable(&format!("{title}（{exe}）")),
+            is_game,
         });
     }
+    // 排序是稳定的，其余窗口保持原来的前后顺序。
+    targets.sort_by_key(|target| !target.is_game);
     Ok(targets)
 }
 

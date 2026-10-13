@@ -99,11 +99,17 @@ fn choose_source(target: TargetKind) -> Result<Box<dyn FrameSource + Send>, Box<
             if windows.is_empty() {
                 return Err("没有可以选择的窗口".into());
             }
-            println!("选择要扫描的窗口：");
+            // 游戏窗口排在最前面。
+            let game = windows.iter().position(|window| window.is_game);
+            if game.is_some() {
+                println!("选择要扫描的窗口（直接回车选游戏窗口）：");
+            } else {
+                println!("选择要扫描的窗口：");
+            }
             for (i, window) in windows.iter().enumerate() {
                 println!("  {}. {}", i + 1, window.label);
             }
-            let index = read_choice(windows.len(), None)?;
+            let index = read_choice(windows.len(), game)?;
             Box::new(PickedWindowSource::new(&windows[index]))
         }
         TargetKind::Monitor => {

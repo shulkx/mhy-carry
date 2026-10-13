@@ -135,7 +135,8 @@ fn remove_credentials(shared: &Shared) -> CommandResult {
 pub struct TargetView {
     id: u32,
     label: String,
-    is_primary: bool,
+    /// 默认选中它：游戏窗口、主显示器。
+    preferred: bool,
 }
 
 #[tauri::command]
@@ -148,7 +149,7 @@ pub fn list_targets(kind: TargetKind) -> CommandResult<Vec<TargetView>> {
             .map(|window| TargetView {
                 id: window.id,
                 label: window.label,
-                is_primary: false,
+                preferred: window.is_game,
             })
             .collect(),
         TargetKind::Monitor => list_monitors()
@@ -156,8 +157,12 @@ pub fn list_targets(kind: TargetKind) -> CommandResult<Vec<TargetView>> {
             .into_iter()
             .map(|monitor| TargetView {
                 id: monitor.id,
-                label: monitor.label,
-                is_primary: monitor.is_primary,
+                label: if monitor.is_primary {
+                    format!("{}（主显示器）", monitor.label)
+                } else {
+                    monitor.label
+                },
+                preferred: monitor.is_primary,
             })
             .collect(),
     })

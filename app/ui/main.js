@@ -138,21 +138,22 @@ function dotClass(scan) {
 }
 
 async function loadTargets(kind) {
+  // 先记下原来的选择再清空列表，否则刷新后就丢了。
+  const keep = $("target-select").value;
   targetList = [];
-  fillTargets();
+  fillTargets(keep);
   if (kind === "auto") return;
   targetList = (await call("list_targets", { kind })) ?? [];
-  fillTargets();
+  fillTargets(keep);
 }
 
-function fillTargets() {
+function fillTargets(keep) {
   const select = $("target-select");
-  const keep = select.value;
-  select.replaceChildren(...targetList.map((item) =>
-    el("option", { value: String(item.id) }, item.label + (item.is_primary ? "（主显示器）" : ""))));
-  const primary = targetList.find((item) => item.is_primary);
+  select.replaceChildren(...targetList.map((item) => el("option", { value: String(item.id) }, item.label)));
+  // 刷新后保留原来的选择；没选过时选游戏窗口或主显示器。
+  const preferred = targetList.find((item) => item.preferred);
   if (targetList.some((item) => String(item.id) === keep)) select.value = keep;
-  else if (primary) select.value = String(primary.id);
+  else if (preferred) select.value = String(preferred.id);
 }
 
 function renderScan() {
