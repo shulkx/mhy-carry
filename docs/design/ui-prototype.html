@@ -479,7 +479,7 @@ const SCENARIOS = [
     account: { kind: "bound", credential: "valid" }, scan: { kind: "scanning", target: "window" } },
   { group: "扫描", id: "confirm", label: "等你确认",
     account: { kind: "bound", credential: "valid" }, scan: { kind: "confirm" },
-    note: "确认框由 Rust 端直接弹出系统对话框：置顶，盖在游戏上面；默认按钮是“否”，误按回车不会登录；同时闪任务栏、响提示音。" },
+    note: "确认框由 Rust 端直接弹出系统对话框：置顶，盖在游戏上面；按钮是“确定 / 取消”，默认“取消”，误按回车或字母键都不会登录；同时闪任务栏、响提示音。" },
   { group: "扫描", id: "logging-in", label: "正在登录",
     account: { kind: "bound", credential: "valid" }, scan: { kind: "logging-in" } },
 
@@ -669,7 +669,7 @@ function renderScan(scan) {
     body.append(el("div", { class: "mb-icon", "aria-hidden": "true" }, "!"),
       el("div", {}, "在 YuanShen.exe（原神）中发现原神登录二维码。用账号 " + UID + " 登录？确认后，显示这个二维码的设备将登录你的账号。"));
     const buttons = el("div", { class: "mb-buttons" });
-    buttons.append(el("button", { type: "button" }, "是(Y)"), el("button", { type: "button", class: "default" }, "否(N)"));
+    buttons.append(el("button", { type: "button" }, "确定"), el("button", { type: "button", class: "default" }, "取消"));
     box.append(body, buttons);
     layer.append(box);
   }

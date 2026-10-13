@@ -5,18 +5,20 @@ use std::ffi::c_void;
 
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::WindowsAndMessaging::{
-    FLASHW_ALL, FLASHW_TIMERNOFG, FLASHWINFO, FlashWindowEx, IDYES, MB_DEFBUTTON2, MB_ICONWARNING,
-    MB_SETFOREGROUND, MB_TOPMOST, MB_YESNO, MESSAGEBOX_STYLE, MessageBoxW,
+    FLASHW_ALL, FLASHW_TIMERNOFG, FLASHWINFO, FlashWindowEx, IDOK, MB_DEFBUTTON2, MB_ICONERROR,
+    MB_ICONWARNING, MB_OK, MB_OKCANCEL, MB_SETFOREGROUND, MB_TOPMOST, MESSAGEBOX_STYLE,
+    MessageBoxW,
 };
 use windows::core::HSTRING;
 
 const TITLE: &str = "MhyCarry";
 
-/// 弹出“是 / 否”确认框，阻塞到你回答为止，返回你是否点了“是”。
+/// 弹出“确定 / 取消”确认框，阻塞到你回答为止，返回你是否点了“确定”。
 ///
-/// 默认按钮是“否”：确认框突然弹出时误按回车或空格只会取消。带警告图标，弹出时会响
-/// 系统提示音。`topmost` 为真时置顶并尝试切到前台，用于登录确认：发现二维码时游戏
-/// 在最前面，不置顶就会被挡住。`owner` 是所属窗口的句柄，确认框显示在它前面。
+/// 默认按钮是“取消”，两个按钮都没有快捷字母：确认框突然弹出时，误按回车、空格、Esc
+/// 或任何字母键都不会确认，只能用鼠标点“确定”（换成“是 / 否”的话，单按 Y 就会确认）。
+/// 带警告图标，弹出时会响系统提示音。`topmost` 为真时置顶并尝试切到前台，用于登录确认：
+/// 发现二维码时游戏在最前面，不置顶就会被挡住。`owner` 是所属窗口的句柄，确认框显示在它前面。
 pub fn confirm(owner: Option<isize>, text: &str, topmost: bool) -> bool {
     let owner = owner.map(|raw| HWND(raw as *mut c_void));
     // SAFETY: 两个字符串在调用期间一直有效，MessageBoxW 只读取它们。
@@ -28,7 +30,20 @@ pub fn confirm(owner: Option<isize>, text: &str, topmost: bool) -> bool {
             style(topmost),
         )
     };
-    answer == IDYES
+    answer == IDOK
+}
+
+/// 弹出只有“确定”的错误提示，比如程序启动失败时：正式版没有控制台，不弹窗就什么都看不到。
+pub fn alert(text: &str) {
+    // SAFETY: 两个字符串在调用期间一直有效，MessageBoxW 只读取它们。
+    unsafe {
+        MessageBoxW(
+            None,
+            &HSTRING::from(text),
+            &HSTRING::from(TITLE),
+            MB_OK | MB_ICONERROR,
+        );
+    }
 }
 
 /// 闪烁窗口在任务栏上的按钮，直到窗口回到前台。
@@ -47,7 +62,7 @@ pub fn flash(window: isize) {
 }
 
 fn style(topmost: bool) -> MESSAGEBOX_STYLE {
-    let style = MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2;
+    let style = MB_OKCANCEL | MB_ICONWARNING | MB_DEFBUTTON2;
     if topmost {
         style | MB_TOPMOST | MB_SETFOREGROUND
     } else {
@@ -63,10 +78,14 @@ mod tests {
         style.0 & flag.0 == flag.0
     }
 
+    /// 低 4 位是按钮组合。
+    const BUTTONS_MASK: u32 = 0xF;
+
     #[test]
-    fn default_button_is_no() {
+    fn buttons_are_ok_and_cancel_with_cancel_as_default() {
+        // “是(Y) / 否(N)”带快捷字母，单按 Y 就会确认；“确定 / 取消”没有快捷字母。
         for topmost in [false, true] {
-            assert!(has(style(topmost), MB_YESNO));
+            assert_eq!(style(topmost).0 & BUTTONS_MASK, MB_OKCANCEL.0);
             assert!(has(style(topmost), MB_DEFBUTTON2));
         }
     }
