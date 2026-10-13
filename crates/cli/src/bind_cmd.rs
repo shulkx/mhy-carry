@@ -19,7 +19,7 @@ pub async fn run() -> CliResult {
     let ctx = Context::load()?;
     let mut file = ctx.store.load()?;
     if let Some(existing) = file.accounts.first() {
-        let question = format!("已经绑定了账号 {}，要换成新账号吗？", existing.masked_uid());
+        let question = format!("已经绑定了账号 {}，要换成新账号吗？", existing.uid);
         if !prompt::confirm(&question)? {
             println!("已取消。");
             return Ok(());
@@ -47,10 +47,10 @@ pub async fn run() -> CliResult {
             Ok(BindStatus::Confirmed(bound)) => {
                 let account =
                     Account::new(bound.uid, bound.mid, bound.stoken, jiff::Timestamp::now());
-                let masked = account.masked_uid();
+                let uid = account.uid.clone();
                 file.accounts = vec![account];
                 ctx.store.save(&file)?;
-                println!("绑定成功：{masked}");
+                println!("绑定成功：{uid}");
                 println!("凭证已保存（明文）：{}", ctx.store.path().display());
                 return Ok(());
             }

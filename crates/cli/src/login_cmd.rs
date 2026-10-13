@@ -36,8 +36,7 @@ pub async fn run(source: QrSource) -> CliResult {
 
     let question = format!(
         "在{from}中发现{}登录二维码。用账号 {} 登录？确认后，显示这个二维码的设备将登录你的账号。",
-        qr.game.display_name,
-        account.masked_uid()
+        qr.game.display_name, account.uid
     );
     if !prompt::confirm(&question)? {
         println!("已取消。");

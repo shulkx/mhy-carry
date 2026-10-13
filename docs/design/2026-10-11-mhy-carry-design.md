@@ -169,13 +169,13 @@ MHY_Scanner 公开源码里的旧方案（panda `fetch`/`query`，再调 `getTok
 5. **确认**：由 Rust 端通过 tauri-plugin-dialog 弹出系统原生对话框，例如：
 
    > 在 YuanShen.exe（原神）中发现**原神**登录二维码。
-   > 用账号 1\*\*\*\*678 登录？确认后，显示这个二维码的设备将登录你的账号。
+   > 用账号 300012345 登录？确认后，显示这个二维码的设备将登录你的账号。
    > [登录] [取消]
 
    - `cli` 里没有图形界面，同样的内容改为在终端里提问，输入 y 确认。
    - 游戏名取自程序自己的 `GameProfile`，不用二维码里的 `app_name` 文字。
    - 来源描述取自 `SourceInfo`。
-   - uid 只显示第一位和最后三位，中间打码。
+   - uid 完整显示，不打码：账号是用户自己的，需要一眼认出是哪个账号。
 6. **登录**：你点了“登录”，程序才依次调用下面三步。所有请求都带 `x-rpc-app_id: bll8iq97cem8` 和 `x-rpc-device_id`，不带 DS 签名。
    1. **panda 扫码：** `POST https://api-sdk.mihoyo.com/{biz_key}/combo/panda/qrcode/scan`，请求体 `{"passport_app_id": "bll8iq97cem8", "ticket": …, "app_id": 4, "device": …, "ts": <Unix 秒>}`，`app_id` 是 JSON 整数。返回的 `data.passport_qr_url` 形如 `https://user.mihoyo.com/login-platform/mobile.html?expire=…&tk=…&token_types=1#/login/qr`，按第 7 节末尾的规则校验后，取出 `tk` 和 `token_types`。
    2. **passport 扫码：** `POST https://passport-api.mihoyo.com/account/ma-cn-passport/app/scanQRLogin`，请求体 `{"ticket": <tk>, "token_types": ["1"]}`，用 Cookie `stoken=…;mid=…` 认证。返回的 `data.app_id` 必须等于 `GameProfile.passport_app_id`，否则说明这不是这个游戏的登录码，**取消登录**，不调第 3 步。
@@ -202,7 +202,7 @@ Rust 端维护一份完整的界面状态（`AppState`），分账号、绑定�
 | 状态 | 界面显示 |
 |---|---|
 | 未绑定 | 还没有绑定账号；[绑定] |
-| 已绑定 | 打码后的 uid、绑定时间；[重新绑定] [解绑]。凭证状态分未检查、有效、已失效三种，已失效时提示重新绑定 |
+| 已绑定 | 完整的 uid、绑定时间；[重新绑定] [解绑]。凭证状态分未检查、有效、已失效三种，已失效时提示重新绑定 |
 | 账号文件格式比本程序新 | 说明情况；绑定、解绑都不可用，因为这种文件只读（第 8 节） |
 
 - 账号文件损坏时，程序已经把它改名备份了（第 8 节），按未绑定处理，并显示一次原因。
@@ -227,7 +227,7 @@ Rust 端维护一份完整的界面状态（`AppState`），分账号、绑定�
 | 暂停 | 窗口已最小化，恢复后继续 | |
 | 游戏不在最前面 | 原神不在最前面，切回游戏后继续 | 只有自动模式有 |
 | 扫描中 | 正在扫描 YuanShen.exe（原神） | 附带最近一条提示 |
-| 等你确认 | 请在弹出的对话框里确认（显示游戏、来源、打码 uid） | 这期间暂停识别 |
+| 等你确认 | 请在弹出的对话框里确认（显示游戏、来源、uid） | 这期间暂停识别 |
 | 登录中 | 正在登录… | 这期间暂停识别 |
 
 结束原因（结束后回到空闲状态并显示）：
@@ -332,7 +332,7 @@ panda 扫码返回的 `passport_qr_url` 来自服务器，同样要校验：http
 - 测试时需要连本地假服务器。可以替换域名、放行 http 的构造函数只在 `#[cfg(test)]` 下存在，正式构建里根本没有这段代码。
 
 ### 界面隔离（Tauri）
-- **token 只存在于 Rust 一侧。** 界面能拿到的只有第 6.3 节的状态快照（打码后的 uid、运行状态、提示文字）和截图目标列表，不包括截到的画面和二维码内容。
+- **token 只存在于 Rust 一侧。** 界面能拿到的只有第 6.3 节的状态快照（uid、运行状态、提示文字）和截图目标列表，不包括截到的画面和二维码内容。
 - **确认对话框由 Rust 端弹出。** 网页端没有 dialog 权限，网页里的代码没法替你点确认。登录、解绑、替换已绑定的账号，这三种确认都这样做。
 - **能力收到最小：**
   - capabilities 只开放我们自己的命令（通过 app manifest 生成权限）和事件监听，不启用文件、Shell、HTTP、opener 等插件；

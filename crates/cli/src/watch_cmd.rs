@@ -68,7 +68,7 @@ pub async fn run(target: Option<TargetKind>) -> CliResult {
 
     let (mut session, first) = ScanSession::start(
         source.describe(),
-        account.masked_uid(),
+        account.uid.clone(),
         ctx.settings.scan.idle_timeout(),
         Box::new(AlwaysAsk),
         Now::current(),

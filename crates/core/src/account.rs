@@ -49,21 +49,6 @@ impl Account {
             bound_at,
         }
     }
-
-    pub fn masked_uid(&self) -> String {
-        mask_uid(&self.uid)
-    }
-}
-
-/// 只保留第一位和最后三位，中间固定显示 4 个星号，不暴露 uid 的长度。
-pub fn mask_uid(uid: &str) -> String {
-    let chars: Vec<char> = uid.chars().collect();
-    if chars.len() <= 4 {
-        return "****".to_owned();
-    }
-    let first = chars[0];
-    let last3: String = chars[chars.len() - 3..].iter().collect();
-    format!("{first}****{last3}")
 }
 
 fn serialize_secret<S: Serializer>(
@@ -84,14 +69,6 @@ mod tests {
             SecretString::from("v2_secret_stoken"),
             "2026-10-11T08:00:00Z".parse().unwrap(),
         )
-    }
-
-    #[test]
-    fn masks_uid_keeping_first_and_last_three() {
-        assert_eq!(mask_uid("123456789"), "1****789");
-        assert_eq!(mask_uid("12345"), "1****345");
-        assert_eq!(mask_uid("1234"), "****");
-        assert_eq!(mask_uid(""), "****");
     }
 
     #[test]

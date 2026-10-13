@@ -15,7 +15,7 @@ pub fn run(remove: bool) -> CliResult {
 
     match file.accounts.first() {
         Some(account) => {
-            println!("账号：{}", account.masked_uid());
+            println!("账号：{}", account.uid);
             println!("绑定时间：{}", account.bound_at);
             println!("凭证文件（明文）：{}", store.path().display());
         }
