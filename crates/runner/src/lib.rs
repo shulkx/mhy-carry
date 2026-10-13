@@ -127,13 +127,15 @@ pub async fn run_scan(
             // 动作之前截到、还留在通道里的画面已经过时，丢掉，只处理之后截到的。
             while frames.try_recv().is_ok() {}
         }
+        // “停止”优先：和新画面同时就绪时先处理停止，免得点了停止还弹出登录确认框。
         let event = tokio::select! {
+            biased;
+            Some(()) = stop.recv() => Event::StopRequested,
             observed = tokio::time::timeout(TICK, frames.recv()) => match observed {
                 Ok(Some(observation)) => Event::Observed(observation),
                 Ok(None) => Event::Observed(Observation::CaptureFailed("截图线程意外退出".to_owned())),
                 Err(_) => Event::Tick,
             },
-            Some(()) = stop.recv() => Event::StopRequested,
         };
         actions.extend(session.handle(event, Now::current()));
         ui.show(session.status());
