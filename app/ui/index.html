@@ -2,9 +2,54 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>MhyCarry</title>
+<link rel="stylesheet" href="style.css">
+<script src="main.js" defer></script>
 </head>
 <body>
-<p>MhyCarry</p>
+<main class="content">
+  <section aria-labelledby="account-label">
+    <h2 class="section-label" id="account-label">账号</h2>
+    <div id="account"></div>
+  </section>
+
+  <section class="scan" aria-labelledby="scan-label">
+    <h2 class="section-label" id="scan-label">扫描</h2>
+    <div class="segmented" role="group" aria-label="截图目标">
+      <button type="button" id="target-auto">自动</button>
+      <button type="button" id="target-window">指定窗口</button>
+      <button type="button" id="target-monitor">显示器</button>
+    </div>
+    <div class="target-pick" id="target-pick" hidden>
+      <select id="target-select" aria-label="选择截图目标"></select>
+      <button type="button" class="btn" id="target-refresh">刷新</button>
+    </div>
+    <button type="button" class="btn primary big" id="scan-button">开始扫描</button>
+    <div class="status" aria-live="polite">
+      <span class="dot" id="status-dot" aria-hidden="true"></span>
+      <div>
+        <div class="status-text" id="status-text"></div>
+        <div class="notice" id="status-notice"></div>
+      </div>
+    </div>
+    <div class="message bad" id="error" role="alert" hidden></div>
+  </section>
+
+  <details class="settings">
+    <summary>设置</summary>
+    <div class="settings-grid">
+      <label for="setting-target">默认截图目标</label>
+      <select id="setting-target">
+        <option value="auto">自动找原神窗口</option>
+        <option value="window">指定窗口</option>
+        <option value="monitor">显示器</option>
+      </select>
+      <label for="setting-timeout">无二维码自动停止</label>
+      <span><input id="setting-timeout" type="number" min="30" step="30"> 秒（最少 30）</span>
+    </div>
+  </details>
+</main>
+<footer class="footer" id="footer"></footer>
 </body>
 </html>
