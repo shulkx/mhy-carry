@@ -76,11 +76,8 @@ function renderAccount() {
   row.append(el("span", { class: "uid" }, account.uid),
     el("span", { class: "badge " + account.credential }, CREDENTIAL_LABELS[account.credential]));
   box.append(row, el("div", { class: "meta" }, "绑定于 " + account.bound_at));
-  if (bind.kind === "succeeded") {
-    const message = el("div", { class: "message ok" }, "绑定成功。 ");
-    message.append(button("关闭", "btn", () => call("bind_cancel")));
-    box.append(message);
-  }
+  // 几秒后由 Rust 端自动收起。
+  if (bind.kind === "succeeded") box.append(el("div", { class: "message ok" }, "绑定成功。"));
   if (account.credential === "invalid") {
     box.append(el("div", { class: "message bad" }, "这个账号的登录状态已失效，重新绑定后才能继续使用。"));
   }

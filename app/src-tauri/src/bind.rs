@@ -13,13 +13,16 @@ use crate::state::{BindView, qr_data_uri};
 const POLL_INTERVAL: Duration = Duration::from_secs(2);
 /// 查询状态没有副作用，网络出错允许重试一次，连续两次就放弃（设计文档第 10 节）。
 const MAX_NETWORK_ERRORS_IN_A_ROW: u32 = 2;
+/// “绑定成功”显示这么久后自动收起（设计文档第 6.3 节）。
+const SUCCESS_SHOWN_FOR: Duration = Duration::from_secs(5);
 
 /// 跑完一次绑定，把结果写进状态。
 pub async fn run(app: AppHandle) {
     let outcome = bind(&app).await;
+    let succeeded = matches!(outcome, BindView::Succeeded { .. });
     let shared = app.state::<Shared>();
     update(&app, |model| {
-        if matches!(outcome, BindView::Succeeded { .. }) {
+        if succeeded {
             reload_account(model, &shared.store);
         }
         // 已经被取消了就不再显示结果。
@@ -27,6 +30,15 @@ pub async fn run(app: AppHandle) {
             model.bind = outcome;
         }
     });
+    // 成功时账号已经显示出来，提示几秒后收起；过期、取消、失败要你处理，一直显示。
+    if succeeded {
+        tokio::time::sleep(SUCCESS_SHOWN_FOR).await;
+        update(&app, |model| {
+            if matches!(model.bind, BindView::Succeeded { .. }) {
+                model.bind = BindView::Idle;
+            }
+        });
+    }
 }
 
 async fn bind(app: &AppHandle) -> BindView {

@@ -62,7 +62,10 @@ pub async fn bind_start(app: AppHandle) -> CommandResult {
     });
     if start {
         let task = tauri::async_runtime::spawn(bind::run(app.clone()));
-        app.state::<Shared>().lock().bind_task = Some(task);
+        // 上一次绑定成功后可能还在等着收起提示，停掉它，免得收起这一次的结果。
+        if let Some(previous) = app.state::<Shared>().lock().bind_task.replace(task) {
+            previous.abort();
+        }
     }
     Ok(())
 }

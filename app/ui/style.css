@@ -93,7 +93,8 @@ button, select, input { font: inherit; color: inherit; }
 .bind img { width: 132px; height: 132px; background: #ffffff; border: 1px solid var(--line); }
 .bind .step { font-size: 15px; font-weight: 600; }
 
-.scan { border-top: 1px solid var(--line); padding-top: 16px; display: grid; gap: 12px; }
+/* 列宽固定为容器宽度，否则窗口标题很长时，下拉列表会把整列撑出窗口。 */
+.scan { border-top: 1px solid var(--line); padding-top: 16px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
 .segmented {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
