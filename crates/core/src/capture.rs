@@ -49,6 +49,9 @@ pub enum CaptureError {
     NotFound,
     #[error("窗口已最小化")]
     Minimized,
+    /// 自动模式下游戏窗口不在最前面。截的是窗口所在的屏幕区域，这时可能截到盖在上面的窗口。
+    #[error("游戏窗口不在最前面")]
+    InBackground,
     /// 指定的窗口关了，或者指定的显示器断开了。
     #[error("截图目标已经不在了")]
     Gone,

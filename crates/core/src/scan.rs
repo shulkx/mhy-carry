@@ -46,6 +46,8 @@ pub enum Observation {
     TargetMissing,
     /// 窗口最小化了。
     TargetMinimized,
+    /// 自动模式下游戏窗口不在最前面。
+    TargetInBackground,
     /// 指定的窗口关了，或者指定的显示器断开了。
     TargetGone,
     /// 这一帧没截成。
@@ -61,6 +63,7 @@ pub fn observe(source: &mut dyn FrameSource, decoder: &dyn QrDecoder) -> Observa
         },
         Err(CaptureError::NotFound) => Observation::TargetMissing,
         Err(CaptureError::Minimized) => Observation::TargetMinimized,
+        Err(CaptureError::InBackground) => Observation::TargetInBackground,
         Err(CaptureError::Gone) => Observation::TargetGone,
         Err(CaptureError::Failed(message)) => Observation::CaptureFailed(message),
     }
@@ -146,6 +149,8 @@ pub enum ScanStatus {
     WaitingForWindow { game: String },
     /// 窗口最小化了，恢复后继续。
     Paused,
+    /// 自动模式下游戏窗口不在最前面，切回游戏后继续。`game` 是游戏名。
+    GameInBackground { game: String },
     /// 正在扫描，`notice` 是最近一条提示。
     Scanning {
         source: String,
@@ -175,6 +180,9 @@ impl fmt::Display for ScanStatus {
             ScanStatus::CheckingCredential => write!(f, "检查账号凭证…"),
             ScanStatus::WaitingForWindow { game } => write!(f, "等待{game}窗口…"),
             ScanStatus::Paused => write!(f, "窗口已最小化，恢复后继续"),
+            ScanStatus::GameInBackground { game } => {
+                write!(f, "{game}不在最前面，切回游戏后继续")
+            }
             ScanStatus::Scanning { source, .. } => write!(f, "正在扫描 {source}"),
             ScanStatus::AwaitingConfirm { .. } => write!(f, "等你确认是否登录"),
             ScanStatus::LoggingIn => write!(f, "正在登录…"),
@@ -319,11 +327,15 @@ impl ScanSession {
         }
     }
 
-    /// 是否在看画面：等窗口、暂停、扫描。只有这时才处理画面，也只有这时才计算超时。
+    /// 是否在看画面：等窗口、暂停、游戏不在最前面、扫描。只有这时才处理画面，
+    /// 也只有这时才计算超时。
     fn watching(&self) -> bool {
         matches!(
             self.status,
-            ScanStatus::WaitingForWindow { .. } | ScanStatus::Paused | ScanStatus::Scanning { .. }
+            ScanStatus::WaitingForWindow { .. }
+                | ScanStatus::Paused
+                | ScanStatus::GameInBackground { .. }
+                | ScanStatus::Scanning { .. }
         )
     }
 
@@ -392,6 +404,12 @@ impl ScanSession {
             }
             Observation::TargetMinimized => {
                 self.status = ScanStatus::Paused;
+                None
+            }
+            Observation::TargetInBackground => {
+                self.status = ScanStatus::GameInBackground {
+                    game: self.target.label.clone(),
+                };
                 None
             }
             // 自动模式下游戏窗口关了，游戏可能会重开，回去等着；指定的目标没了就停止。
@@ -878,6 +896,36 @@ mod tests {
     }
 
     #[test]
+    fn auto_mode_pauses_while_the_game_is_in_the_background() {
+        // 截的是游戏窗口所在的屏幕区域，游戏不在最前面时可能截到盖在上面的窗口。
+        let clock = Clock::new();
+        let mut session = start(game_window(), Box::new(AlwaysAsk), &clock);
+        session.handle(
+            Event::Observed(Observation::TargetInBackground),
+            clock.at(1),
+        );
+        let status = session.status().clone();
+        assert_eq!(
+            status,
+            ScanStatus::GameInBackground {
+                game: "原神".to_owned()
+            }
+        );
+        assert_eq!(status.to_string(), "原神不在最前面，切回游戏后继续");
+        session.handle(frame(found_game(), &[]), clock.at(2));
+        assert!(matches!(session.status(), ScanStatus::Scanning { .. }));
+        // 游戏一直不在最前面，照样超时。
+        session.handle(
+            Event::Observed(Observation::TargetInBackground),
+            clock.at(3),
+        );
+        assert_eq!(
+            session.handle(Event::Tick, clock.at(300)),
+            Some(Action::Finish)
+        );
+    }
+
+    #[test]
     fn auto_mode_waits_again_when_the_game_window_closes() {
         let clock = Clock::new();
         let mut session = start(game_window(), Box::new(AlwaysAsk), &clock);
@@ -985,6 +1033,7 @@ mod tests {
             Err(CaptureError::Minimized),
             Err(CaptureError::Gone),
             Err(CaptureError::Failed("拒绝访问".to_owned())),
+            Err(CaptureError::InBackground),
         ]);
         assert_eq!(
             observe(&mut source, &FakeDecoder),
@@ -1005,6 +1054,10 @@ mod tests {
         assert_eq!(
             observe(&mut source, &FakeDecoder),
             Observation::CaptureFailed("拒绝访问".to_owned())
+        );
+        assert_eq!(
+            observe(&mut source, &FakeDecoder),
+            Observation::TargetInBackground
         );
     }
 

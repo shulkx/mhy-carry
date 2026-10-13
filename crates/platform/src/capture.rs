@@ -147,13 +147,13 @@ impl FrameSource for GameWindowSource {
         if let Some((id, _)) = &self.found
             && let Some(window) = find_window(*id)?
         {
-            return capture_window(&window);
+            return capture_foreground_game(&window);
         }
         // 还没找到，或者窗口关了：重新找。
         self.found = None;
         let (window, info) = self.search()?.ok_or(CaptureError::NotFound)?;
         self.found = Some((window.id().map_err(failed)?, info));
-        capture_window(&window)
+        capture_foreground_game(&window)
     }
 
     fn describe(&self) -> SourceInfo {
@@ -242,6 +242,18 @@ fn window_exists(id: u32) -> bool {
     let hwnd = HWND(id as i32 as isize as *mut c_void);
     // SAFETY: IsWindow 只是查询，传入任何值都安全。
     unsafe { IsWindow(Some(hwnd)).as_bool() }
+}
+
+/// 游戏窗口在最前面才截。截的是窗口所在的屏幕区域，游戏不在最前面时可能截到盖在
+/// 上面的窗口，二维码的来源就说错了（设计文档第 6.2 节）。
+fn capture_foreground_game(window: &Window) -> Result<Frame, CaptureError> {
+    if window.is_minimized().map_err(failed)? {
+        return Err(CaptureError::Minimized);
+    }
+    if !window.is_focused().map_err(failed)? {
+        return Err(CaptureError::InBackground);
+    }
+    capture_window(window)
 }
 
 /// 截窗口所在的那块屏幕区域。窗口最小化时返回 `Minimized`。
