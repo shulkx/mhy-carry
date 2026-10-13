@@ -1,0 +1,17 @@
+{
+  "identifier": "main",
+  "description": "主窗口只能调用 MhyCarry 自己的命令，以及监听状态事件。不开放文件、对话框、Shell、HTTP、窗口控制等任何其他能力。",
+  "windows": ["main"],
+  "permissions": [
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "allow-get-state",
+    "allow-bind-start",
+    "allow-bind-cancel",
+    "allow-unbind",
+    "allow-list-targets",
+    "allow-scan-start",
+    "allow-scan-stop",
+    "allow-update-settings"
+  ]
+}

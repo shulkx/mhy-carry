@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-bind-start"
+description = "Enables the bind_start command without any pre-configured scope."
+commands.allow = ["bind_start"]
+
+[[permission]]
+identifier = "deny-bind-start"
+description = "Denies the bind_start command without any pre-configured scope."
+commands.deny = ["bind_start"]

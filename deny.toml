@@ -7,7 +7,10 @@ targets = [
 all-features = true
 
 [advisories]
-ignore = []
+ignore = [
+    # 只在 Linux 上由 Tauri 经 GTK 绑定（glib-macros）引入，Windows 上不编译它。v1 只发布 Windows 版。
+    { id = "RUSTSEC-2024-0370", reason = "只在 Linux 上由 Tauri 的 GTK 绑定引入，v1 只发布 Windows 版" },
+]
 
 [licenses]
 # 只允许宽松许可证。MPL-2.0 是文件级弱 copyleft，只约束被改动的那个依赖本身，不影响本项目用 MIT。
