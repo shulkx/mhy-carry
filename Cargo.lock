@@ -1768,6 +1768,7 @@ dependencies = [
  "mhy-carry-api",
  "mhy-carry-core",
  "mhy-carry-platform",
+ "mhy-carry-runner",
  "qrcode",
  "tempfile",
  "tokio",

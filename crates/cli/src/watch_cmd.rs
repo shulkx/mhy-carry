@@ -1,36 +1,23 @@
 //! watch：自动截图识别登录二维码，发现后问你要不要登录（设计文档第 6.2、6.3 节）。
 
-use std::collections::VecDeque;
 use std::error::Error;
 use std::io::{self, BufRead, Write};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::{Duration, Instant};
+use std::sync::Mutex;
 
-use mhy_carry_api::{ApiClient, ApiError, Credentials};
 use mhy_carry_core::capture::FrameSource;
-use mhy_carry_core::confirm::AlwaysAsk;
 use mhy_carry_core::decode::RxingDecoder;
 use mhy_carry_core::games::GAMES;
-use mhy_carry_core::scan::{
-    Action, Event, Failure, Notice, Now, Observation, Prompt, ScanSession, ScanStatus, observe,
-};
+use mhy_carry_core::scan::{Notice, Prompt, ScanStatus};
 use mhy_carry_core::settings::TargetKind;
 use mhy_carry_core::store::AccountStore;
 use mhy_carry_platform::capture::{
     GameWindowSource, MonitorSource, PickedWindowSource, list_monitors, list_windows,
 };
+use mhy_carry_runner::{ScanJob, ScanUi, run_scan};
 use tokio::sync::mpsc;
 
 use crate::context::Context;
 use crate::{CliResult, prompt};
-
-/// 每秒最多 4 帧（设计文档第 6.2 节）。
-const FRAME_INTERVAL: Duration = Duration::from_millis(250);
-/// 自动模式下找不到游戏窗口时，每 2 秒重找一次。
-const SEARCH_INTERVAL: Duration = Duration::from_secs(2);
-/// 这么久没有新画面时喂一次 Tick，让会话检查超时。
-const TICK: Duration = Duration::from_secs(1);
 
 /// 命令行里的截图目标。
 #[derive(Debug, Clone, Copy, clap::ValueEnum)]
@@ -55,63 +42,51 @@ impl From<Target> for TargetKind {
 
 pub async fn run(target: Option<TargetKind>) -> CliResult {
     let ctx = Context::load()?;
-    let file = ctx.store.load()?;
-    let account = file
+    let account = ctx
+        .store
+        .load()?
         .accounts
-        .first()
+        .into_iter()
+        .next()
         .ok_or("还没有绑定账号，先运行 mhy-carry-cli bind")?;
     let source = choose_source(target.unwrap_or(ctx.settings.scan.default_target))?;
-    let credentials = Credentials {
-        stoken: &account.stoken,
-        mid: &account.mid,
+    let job = ScanJob {
+        source,
+        decoder: Box::new(RxingDecoder),
+        uid: account.uid,
+        mid: account.mid,
+        stoken: account.stoken,
+        idle_timeout: ctx.settings.scan.idle_timeout(),
     };
-
-    let (mut session, first) = ScanSession::start(
-        source.describe(),
-        account.uid.clone(),
-        ctx.settings.scan.idle_timeout(),
-        Box::new(AlwaysAsk),
-        Now::current(),
-    );
     println!("开始扫描，按 Ctrl+C 结束。");
-    let mut printer = Printer::default();
-    printer.show(session.status());
+    // 命令行没有“停止”按钮，Ctrl+C 直接结束程序。
+    let (_stop, stop_signal) = mpsc::channel(1);
+    run_scan(&ctx.api, job, &TerminalUi::default(), stop_signal).await;
+    Ok(())
+}
 
-    // 检查凭证、等你回答、登录期间不处理画面（设计文档第 6.2 节第 2 步），截图线程也跟着停下。
-    let busy = Arc::new(AtomicBool::new(false));
-    let mut frames = spawn_capture(source, Arc::clone(&busy));
-    let mut actions = VecDeque::from([first]);
-    loop {
-        if !actions.is_empty() {
-            busy.store(true, Ordering::Relaxed);
-            while let Some(action) = actions.pop_front() {
-                let event = match action {
-                    Action::CheckCredential => {
-                        Event::CredentialChecked(check_credential(&ctx.api, &credentials).await)
-                    }
-                    Action::Ask(request) => Event::Answered(ask(request).await?),
-                    Action::Login(qr) => Event::LoginFinished(
-                        ctx.api
-                            .login_with_qr(&qr, &credentials)
-                            .await
-                            .map_err(Failure::from),
-                    ),
-                    Action::Finish => return Ok(()),
-                };
-                actions.extend(session.handle(event, Now::current()));
-                printer.show(session.status());
-            }
-            busy.store(false, Ordering::Relaxed);
-            // 动作之前截到、还留在通道里的画面已经过时，丢掉，只处理之后截到的。
-            while frames.try_recv().is_ok() {}
-        }
-        let event = match tokio::time::timeout(TICK, frames.recv()).await {
-            Ok(Some(observation)) => Event::Observed(observation),
-            Ok(None) => return Err("截图线程意外退出".into()),
-            Err(_) => Event::Tick,
-        };
-        actions.extend(session.handle(event, Now::current()));
-        printer.show(session.status());
+/// 在终端里显示状态和提问。
+#[derive(Default)]
+struct TerminalUi {
+    printer: Mutex<Printer>,
+}
+
+impl ScanUi for TerminalUi {
+    fn show(&self, status: &ScanStatus) {
+        self.printer
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .show(status);
+    }
+
+    async fn ask(&self, request: Prompt) -> bool {
+        // 先响一声提示音，因为终端可能被游戏挡住。读不到终端输入时当作“否”。
+        let question = format!("\x07{}", request.question());
+        tokio::task::spawn_blocking(move || prompt::confirm(&question))
+            .await
+            .ok()
+            .and_then(Result::ok)
+            .unwrap_or(false)
     }
 }
 
@@ -180,52 +155,6 @@ fn parse_choice(input: &str, count: usize, default: Option<usize>) -> Option<usi
         Ok(number) if (1..=count).contains(&number) => Some(number - 1),
         _ => None,
     }
-}
-
-/// 在单独的线程里截图和识别（设计文档第 6.2 节第 2 步）。结果放进容量为 1 的通道，
-/// 会话来不及处理时直接丢掉这一帧。`busy` 为真时不截图。主循环结束后通道关闭，线程跟着退出。
-fn spawn_capture(
-    mut source: Box<dyn FrameSource + Send>,
-    busy: Arc<AtomicBool>,
-) -> mpsc::Receiver<Observation> {
-    let (sender, receiver) = mpsc::channel(1);
-    std::thread::spawn(move || {
-        while !sender.is_closed() {
-            if busy.load(Ordering::Relaxed) {
-                std::thread::sleep(FRAME_INTERVAL);
-                continue;
-            }
-            let started = Instant::now();
-            let observation = observe(source.as_mut(), &RxingDecoder);
-            let interval = if observation == Observation::TargetMissing {
-                SEARCH_INTERVAL
-            } else {
-                FRAME_INTERVAL
-            };
-            // 通道满了就丢掉这一帧；通道关了，下一轮循环会退出。
-            let _ = sender.try_send(observation);
-            if let Some(rest) = interval.checked_sub(started.elapsed()) {
-                std::thread::sleep(rest);
-            }
-        }
-    });
-    receiver
-}
-
-/// 检查凭证。它没有副作用，网络出错时重试一次（设计文档第 10 节）。
-async fn check_credential(api: &ApiClient, credentials: &Credentials<'_>) -> Result<(), Failure> {
-    match api.check_stoken(credentials).await {
-        Err(ApiError::Network(_)) => api.check_stoken(credentials).await.map_err(Failure::from),
-        result => result.map_err(Failure::from),
-    }
-}
-
-/// 在终端里问你要不要登录。先响一声提示音，因为终端可能被游戏挡住。
-async fn ask(request: Prompt) -> io::Result<bool> {
-    let question = format!("\x07{}", request.question());
-    tokio::task::spawn_blocking(move || prompt::confirm(&question))
-        .await
-        .map_err(io::Error::other)?
 }
 
 /// 状态有变化时打印一行，带时间；出现新的提示也打印一行。

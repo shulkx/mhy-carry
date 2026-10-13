@@ -11,6 +11,7 @@ publish.workspace = true
 mhy-carry-api.workspace = true
 mhy-carry-core.workspace = true
 mhy-carry-platform.workspace = true
+mhy-carry-runner.workspace = true
 clap.workspace = true
 image.workspace = true
 jiff.workspace = true
