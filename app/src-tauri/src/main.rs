@@ -12,7 +12,7 @@ mod state;
 use tauri::Manager;
 
 fn main() {
-    tauri::Builder::default()
+    let result = tauri::Builder::default()
         .setup(|app| {
             app.manage(model::Shared::load()?);
             Ok(())
@@ -27,6 +27,9 @@ fn main() {
             commands::scan_stop,
             commands::update_settings,
         ])
-        .run(tauri::generate_context!())
-        .expect("启动 MhyCarry 失败");
+        .run(tauri::generate_context!());
+    // 正式版没有控制台，启动失败（比如数据目录不可用、设置文件读写出错）时弹窗说明原因。
+    if let Err(error) = result {
+        mhy_carry_platform::dialog::alert(&format!("MhyCarry 启动失败：{error}"));
+    }
 }

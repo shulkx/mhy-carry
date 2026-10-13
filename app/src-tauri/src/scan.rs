@@ -7,7 +7,7 @@ use tauri::{AppHandle, Manager};
 use tokio::sync::mpsc;
 
 use crate::model::{Shared, update};
-use crate::state::{AccountView, credential_after};
+use crate::state::{AccountView, credential_after, track_notice};
 
 /// 在后台跑一次扫描，结束后清掉“停止”信号。
 pub fn spawn(app: AppHandle, job: ScanJob, stop: mpsc::Receiver<()>) {
@@ -37,6 +37,9 @@ impl ScanUi for WindowUi {
             {
                 *current = credential;
             }
+            track_notice(&mut model.last_notice, &mut model.notice_at, status, || {
+                jiff::Zoned::now().strftime("%H:%M:%S").to_string()
+            });
             model.scan = status.clone();
         });
     }

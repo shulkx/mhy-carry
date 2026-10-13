@@ -80,19 +80,26 @@ pub fn bind_cancel(app: AppHandle) {
 
 #[tauri::command]
 pub async fn unbind(app: AppHandle) -> CommandResult {
-    {
+    let bound = {
         let shared = app.state::<Shared>();
         let model = shared.lock();
         if model.scanning() {
             return Err("扫描中不能解绑，先停止扫描。".to_owned());
         }
-        if let AccountView::Unavailable { message } = &model.account {
-            return Err(message.clone());
+        match &model.account {
+            AccountView::Unavailable { message } => return Err(message.clone()),
+            AccountView::Bound { .. } => true,
+            AccountView::None { .. } => false,
         }
-    }
-    let question = "解绑会删除本机保存的凭证，包括账号文件损坏时留下的旧文件。确定吗？\n\n\
-                    这不会让凭证在服务器端失效；需要的话，请在米游社 App 里下线设备或修改密码。"
-        .to_owned();
+    };
+    // 未绑定时，界面上的“删除旧账号文件”也走这里，只删残留的旧文件。
+    let question = if bound {
+        "解绑会删除本机保存的凭证，包括账号文件损坏时留下的旧文件。确定吗？\n\n\
+         这不会让凭证在服务器端失效；需要的话，请在米游社 App 里下线设备或修改密码。"
+            .to_owned()
+    } else {
+        "删除账号文件损坏时留下的旧文件？里面可能有明文凭证。".to_owned()
+    };
     if !scan::confirm(&app, question, false).await {
         return Ok(());
     }
@@ -166,6 +173,8 @@ pub async fn scan_start(app: AppHandle, target: TargetKind, id: Option<u32>) -> 
             return Err("绑定中不能开始扫描。".to_owned());
         }
         model.scan_stop = Some(stop);
+        model.last_notice = None;
+        model.notice_at = None;
         model.settings.scan.idle_timeout()
     };
     match prepare_job(&app, target, id, idle_timeout) {
@@ -242,11 +251,13 @@ pub fn update_settings(
     let shared = app.state::<Shared>();
     let mut result = Ok(());
     update(&app, |model| {
+        let previous = model.settings.scan.clone();
         model.settings.scan = validated_settings(default_target, idle_timeout_secs);
-        result = model
-            .settings
-            .save(&shared.settings_path)
-            .map_err(|error| error.to_string());
+        if let Err(error) = model.settings.save(&shared.settings_path) {
+            // 没保存成功就退回原来的设置，免得界面上显示的和重启后的不一样。
+            model.settings.scan = previous;
+            result = Err(error.to_string());
+        }
     });
     result
 }

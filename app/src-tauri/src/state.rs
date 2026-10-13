@@ -1,5 +1,6 @@
 //! 给界面的状态快照（设计文档第 6.3 节）。界面只按它显示，自己不记状态。
-//! 快照里永远没有 stoken、mid、ticket、二维码内容和截到的画面。
+//! 快照里永远没有 stoken、mid、游戏登录二维码的内容和截到的画面。唯一的例外是绑定二维码：
+//! 第 6.1 节要求把它显示出来，它的 data URI 里含绑定用的 ticket。
 
 use base64::Engine;
 use base64::prelude::BASE64_STANDARD;
@@ -14,6 +15,8 @@ use serde::Serialize;
 /// 推送给界面的完整快照。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct AppState {
+    /// 快照序号，越大越新。推送可能乱序到达，界面丢掉比手上旧的快照。
+    pub seq: u64,
     pub account: AccountView,
     pub bind: BindView,
     pub scan: ScanStatus,
@@ -21,6 +24,8 @@ pub struct AppState {
     pub scan_text: String,
     /// 最近一条提示的中文说明。
     pub notice_text: Option<String>,
+    /// 这条提示出现的时间（本地时间，时:分:秒）。
+    pub notice_at: Option<String>,
     pub settings: SettingsView,
     /// 账号文件的路径，界面上写明凭证明文保存在哪里（设计文档第 8 节）。
     pub credential_file: String,
@@ -86,6 +91,23 @@ pub fn credential_after(status: &ScanStatus) -> Option<Credential> {
         } => Some(Credential::Invalid),
         ScanStatus::Idle { .. } | ScanStatus::CheckingCredential => None,
         _ => Some(Credential::Valid),
+    }
+}
+
+/// 记下提示出现的时间（设计文档第 6.3 节“最近一条提示，带时间”）。
+/// 只有提示的内容变了才更新时间；暂停、等你确认时提示暂时不显示，不算变化。
+pub fn track_notice(
+    last: &mut Option<String>,
+    at: &mut Option<String>,
+    status: &ScanStatus,
+    now: impl FnOnce() -> String,
+) {
+    if let Some(notice) = status.notice() {
+        let text = notice.to_string();
+        if last.as_deref() != Some(text.as_str()) {
+            *last = Some(text);
+            *at = Some(now());
+        }
     }
 }
 
@@ -266,5 +288,40 @@ mod tests {
             validated_settings(TargetKind::Monitor, 600).idle_timeout_secs,
             600
         );
+    }
+
+    #[test]
+    fn notice_time_changes_only_when_the_notice_changes() {
+        use mhy_carry_core::scan::Notice;
+        let scanning = |notice| ScanStatus::Scanning {
+            source: "YuanShen.exe（原神）".to_owned(),
+            notice,
+        };
+        let (mut last, mut at) = (None, None);
+        track_notice(
+            &mut last,
+            &mut at,
+            &scanning(Some(Notice::QrExpired)),
+            || "10:00:00".to_owned(),
+        );
+        assert_eq!(at.as_deref(), Some("10:00:00"));
+        // 暂停一下再回到扫描，提示没变，时间也不变。
+        track_notice(&mut last, &mut at, &ScanStatus::Paused, || {
+            "10:01:00".to_owned()
+        });
+        track_notice(
+            &mut last,
+            &mut at,
+            &scanning(Some(Notice::QrExpired)),
+            || "10:02:00".to_owned(),
+        );
+        assert_eq!(at.as_deref(), Some("10:00:00"));
+        track_notice(
+            &mut last,
+            &mut at,
+            &scanning(Some(Notice::Declined)),
+            || "10:03:00".to_owned(),
+        );
+        assert_eq!(at.as_deref(), Some("10:03:00"));
     }
 }

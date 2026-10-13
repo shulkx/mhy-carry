@@ -15,8 +15,6 @@ const BAD_STOPS = ["credential_invalid", "target_gone", "capture_failing", "cred
 let state = null;
 let target = null; // 界面上选的截图目标；还没选过时用设置里的默认值
 let targetList = [];
-let lastNotice = null;
-let noticeTime = "";
 
 function el(tag, attrs = {}, text) {
   const node = document.createElement(tag);
@@ -65,6 +63,8 @@ function renderAccount() {
     if (account.notice) box.append(el("div", { class: "message bad" }, account.notice));
     const actions = el("div", { class: "actions" });
     actions.append(button("用米游社扫码绑定", "btn primary", () => call("bind_start")));
+    // 账号文件损坏时留下的备份里可能有明文凭证，未绑定时也要能删掉。
+    if (state.leftovers > 0) actions.append(button("删除旧账号文件", "btn danger", () => call("unbind")));
     box.append(actions);
     return;
   }
@@ -187,12 +187,8 @@ function renderScan() {
   $("status-text").textContent = state.scan_text;
   const notice = $("status-notice");
   notice.replaceChildren();
-  if (state.notice_text !== lastNotice) {
-    lastNotice = state.notice_text;
-    noticeTime = new Date().toLocaleTimeString("zh-CN", { hour12: false });
-  }
   if (state.notice_text) {
-    notice.append(el("time", {}, noticeTime), "提示：" + state.notice_text);
+    notice.append(el("time", {}, state.notice_at ?? ""), "提示：" + state.notice_text);
   } else if (idle && state.account.kind !== "bound") {
     notice.textContent = "绑定账号后才能开始扫描。";
   }
@@ -210,7 +206,7 @@ function renderSettings() {
 function saveSettings() {
   call("update_settings", {
     default_target: $("setting-target").value,
-    idle_timeout_secs: Math.max(30, Number($("setting-timeout").value) || 300),
+    idle_timeout_secs: Math.max(30, Math.round(Number($("setting-timeout").value)) || 300),
   });
 }
 
@@ -218,11 +214,14 @@ function renderFooter() {
   const footer = $("footer");
   footer.replaceChildren("凭证明文保存在 ", el("code", {}, state.credential_file), "，解绑会删除它。");
   if (state.leftovers > 0) {
-    footer.append(el("div", {}, "另有 " + state.leftovers + " 个旧账号文件（账号文件损坏时留下的备份），解绑时一并删除。"));
+    const how = state.account.kind === "bound" ? "解绑时一并删除。" : "可以点上面的“删除旧账号文件”删掉。";
+    footer.append(el("div", {}, "另有 " + state.leftovers + " 个旧账号文件（账号文件损坏时留下的备份），" + how));
   }
 }
 
 function render(next) {
+  // 推送可能乱序到达，丢掉比手上旧的快照。
+  if (state && next.seq < state.seq) return;
   state = next;
   renderAccount();
   renderScan();
@@ -253,8 +252,9 @@ $("setting-target").addEventListener("change", saveSettings);
 $("setting-timeout").addEventListener("change", saveSettings);
 
 async function main() {
-  render(await invoke("get_state"));
+  // 先开始监听再取快照，中间推送的变化不会漏掉。
   await listen("state-changed", (event) => render(event.payload));
+  render(await invoke("get_state"));
   loadTargets(currentTarget());
 }
 

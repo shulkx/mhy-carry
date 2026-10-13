@@ -28,6 +28,11 @@ pub struct Model {
     pub bind_task: Option<JoinHandle<()>>,
     /// 正在进行的扫描的“停止”信号。扫描结束后清掉。
     pub scan_stop: Option<mpsc::Sender<()>>,
+    /// 最近一条提示和它出现的时间（本地时间）。
+    pub last_notice: Option<String>,
+    pub notice_at: Option<String>,
+    /// 最新快照的序号，每推送一次加一。
+    seq: u64,
     /// 上一次推送给界面的快照，没变就不再推送。
     last_sent: Option<AppState>,
 }
@@ -61,6 +66,9 @@ impl Shared {
             leftovers: 0,
             bind_task: None,
             scan_stop: None,
+            last_notice: None,
+            notice_at: None,
+            seq: 0,
             last_sent: None,
         };
         reload_account(&mut model, &store);
@@ -86,11 +94,13 @@ impl Shared {
 
 fn snapshot_of(model: &Model, store: &JsonFileStore) -> AppState {
     AppState {
+        seq: model.seq,
         account: model.account.clone(),
         bind: model.bind.clone(),
         scan: model.scan.clone(),
         scan_text: model.scan.to_string(),
         notice_text: model.scan.notice().map(ToString::to_string),
+        notice_at: model.notice_at.clone(),
         settings: SettingsView {
             default_target: model.settings.scan.default_target,
             idle_timeout_secs: model.settings.scan.idle_timeout_secs,
@@ -101,15 +111,21 @@ fn snapshot_of(model: &Model, store: &JsonFileStore) -> AppState {
 }
 
 /// 修改状态，有变化就把新的完整快照推送给界面。
+///
+/// 后台任务的推送要先排进事件循环，命令里的推送立刻发出，两者到达界面的顺序可能和生成
+/// 顺序相反。所以每份新快照都带递增的序号，界面丢掉比手上旧的快照。
 pub fn update(app: &AppHandle, change: impl FnOnce(&mut Model)) {
     let shared = app.state::<Shared>();
     let snapshot = {
         let mut model = shared.lock();
         change(&mut model);
-        let snapshot = snapshot_of(&model, &shared.store);
+        // 序号还没加，内容一样就和上一份完全相同，不用推送。
+        let mut snapshot = snapshot_of(&model, &shared.store);
         if model.last_sent.as_ref() == Some(&snapshot) {
             return;
         }
+        model.seq += 1;
+        snapshot.seq = model.seq;
         model.last_sent = Some(snapshot.clone());
         snapshot
     };

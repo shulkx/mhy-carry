@@ -22,7 +22,10 @@ pub async fn run(app: AppHandle) {
         if matches!(outcome, BindView::Succeeded { .. }) {
             reload_account(model, &shared.store);
         }
-        model.bind = outcome;
+        // 已经被取消了就不再显示结果。
+        if model.bind.in_progress() {
+            model.bind = outcome;
+        }
     });
 }
 
@@ -44,8 +47,11 @@ async fn bind(app: &AppHandle) -> BindView {
             };
         }
     };
+    // 取消只在下一个 await 处生效；这期间已经取消了，就不要把状态改回“进行中”。
     update(app, |model| {
-        model.bind = BindView::WaitingScan { qr: image.clone() }
+        if model.bind.in_progress() {
+            model.bind = BindView::WaitingScan { qr: image.clone() };
+        }
     });
 
     let mut network_errors = 0;
@@ -56,7 +62,9 @@ async fn bind(app: &AppHandle) -> BindView {
             Ok(BindStatus::Scanned) => {
                 network_errors = 0;
                 update(app, |model| {
-                    model.bind = BindView::WaitingConfirm { qr: image.clone() }
+                    if model.bind.in_progress() {
+                        model.bind = BindView::WaitingConfirm { qr: image.clone() };
+                    }
                 });
             }
             Ok(BindStatus::Confirmed(bound)) => {
