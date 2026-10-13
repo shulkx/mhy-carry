@@ -3,6 +3,9 @@
 // 正式版不显示控制台窗口。
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+#[allow(dead_code)] // 任务 7 接上命令后删除
+mod state;
+
 fn main() {
     tauri::Builder::default()
         .run(tauri::generate_context!())
