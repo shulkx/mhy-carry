@@ -16,6 +16,10 @@ pub struct Settings {
     pub format: u32,
     /// 首次运行时随机生成的 UUID v4，之后固定不变。
     pub device_id: String,
+    /// 使用中的账号的本地 ID（设计文档第 6.4 节）。v0.1 写出的文件没有这一项；
+    /// 它指的账号不在了，就用账号列表里的第一个。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_account: Option<String>,
     /// M1 写出的设置文件没有这一块，读的时候用默认值。
     #[serde(default)]
     pub scan: ScanSettings,
@@ -95,6 +99,7 @@ impl Settings {
         let settings = Settings {
             format: SETTINGS_FORMAT,
             device_id: uuid::Uuid::new_v4().to_string(),
+            active_account: None,
             scan: ScanSettings::default(),
         };
         settings.save(path)?;
@@ -221,6 +226,24 @@ mod tests {
         let text = fs::read_to_string(&path).unwrap();
         assert!(text.contains(r#""default_target": "auto""#), "{text}");
         assert!(text.contains(r#""idle_timeout_secs": 300"#), "{text}");
+    }
+
+    #[test]
+    fn active_account_is_optional_and_saved() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        let mut settings = Settings::load_or_init(&path).unwrap();
+        assert_eq!(settings.active_account, None);
+        assert!(
+            !fs::read_to_string(&path)
+                .unwrap()
+                .contains("active_account")
+        );
+
+        settings.active_account = Some("a1".to_owned());
+        settings.save(&path).unwrap();
+        let again = Settings::load_or_init(&path).unwrap();
+        assert_eq!(again.active_account.as_deref(), Some("a1"));
     }
 
     #[test]
