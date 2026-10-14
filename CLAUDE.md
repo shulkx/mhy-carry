@@ -7,7 +7,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 MhyCarry：识别屏幕上的米哈游游戏登录二维码，用用户绑定的账号确认登录（常见用法：请主播或朋友帮打难关）。Rust workspace + 以后的 Tauri 2 应用，v1 只做 Windows、原神国服官服、一个账号。用户用中文交流。
 
 - 设计：[docs/design/2026-10-11-mhy-carry-design.md](docs/design/2026-10-11-mhy-carry-design.md)，已经和用户逐节确认过。改动设计前先问用户。
-- 进度：M0、M1、M2 已完成（计划见 [docs/plans/](docs/plans/)，实测结论在设计文档第 14 节）。下一步是 M3（Tauri 应用）：先把确认框的提醒方式、页面布局和视觉定下来写进设计文档（第 6.3 节末尾列了这两件事），再写 M3 计划。
+- 进度：M0、M1、M2 已完成（计划见 [docs/plans/](docs/plans/)，实测结论在设计文档第 14 节）。M3（Tauri 应用）代码已完成，还差用户用真实账号实测。M4（发布 v0.1.0）按 [docs/plans/2026-10-14-m4-plan.md](docs/plans/2026-10-14-m4-plan.md) 进行中。
+- 数据目录是 `%LOCALAPPDATA%\io.github.shulkx.mhycarry\`（Tauri 应用标识，设计文档第 8 节）；安装包只为当前用户安装，程序装在 `%LOCALAPPDATA%\MhyCarry\`。
 
 ## 执行计划
 
@@ -28,6 +29,8 @@ cargo deny check                                 # 许可证、漏洞库、依�
 $env:MHY_CARRY_DATA_DIR = "$env:TEMP\mhy-carry-dev"   # 调试时避开真实账号文件
 cargo run -p mhy-carry-cli -- account | bind | login <URL> | login --image <截图>
 cargo run --release -p mhy-carry-cli -- watch [--target auto|window|monitor]
+cargo run -p mhy-carry                           # 图形界面（调试版，右键“检查”可打开开发者工具）
+Push-Location app; cargo tauri build --bundles nsis --ci; Pop-Location   # 安装包，需要 tauri-cli 2.12.0
 ```
 
 每次提交前，fmt、clippy、测试都要通过。
