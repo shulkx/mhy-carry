@@ -123,16 +123,17 @@ pub struct Prompt {
     pub game: &'static str,
     /// 画面来源，比如 `YuanShen.exe（原神）`。
     pub source: String,
-    /// 账号 uid，完整显示。
-    pub uid: String,
+    /// 怎么称呼要登录的账号，比如 `账号「大号」（原神 UID 100000001，通行证 300012345）`，
+    /// 见 `Account::describe`。ID 都完整显示。
+    pub account: String,
 }
 
 impl Prompt {
     /// 确认框里的问题。
     pub fn question(&self) -> String {
         format!(
-            "在 {}中发现{}登录二维码。用账号 {} 登录？确认后，显示这个二维码的设备将登录你的账号。",
-            self.source, self.game, self.uid
+            "在 {}中发现{}登录二维码。用{}登录？确认后，显示这个二维码的设备将登录你的账号。",
+            self.source, self.game, self.account
         )
     }
 }
@@ -252,7 +253,8 @@ impl fmt::Display for Notice {
 pub struct ScanSession {
     /// 开始时选的截图目标。自动模式下 `label` 是游戏名。
     target: SourceInfo,
-    uid: String,
+    /// 确认框里怎么称呼要登录的账号。
+    account: String,
     idle_timeout: Duration,
     policy: Box<dyn ConfirmPolicy + Send>,
     status: ScanStatus,
@@ -277,7 +279,7 @@ impl ScanSession {
     /// 开始一个会话。第一个动作总是检查凭证（设计文档第 6.2 节）。
     pub fn start(
         target: SourceInfo,
-        uid: String,
+        account: String,
         idle_timeout: Duration,
         policy: Box<dyn ConfirmPolicy + Send>,
         now: Now,
@@ -285,7 +287,7 @@ impl ScanSession {
         let session = Self {
             source_label: target.label.clone(),
             target,
-            uid,
+            account,
             idle_timeout,
             policy,
             status: ScanStatus::CheckingCredential,
@@ -480,7 +482,7 @@ impl ScanSession {
                 let prompt = Prompt {
                     game: qr.game.display_name,
                     source: source.label,
-                    uid: self.uid.clone(),
+                    account: self.account.clone(),
                 };
                 self.status = ScanStatus::AwaitingConfirm {
                     prompt: prompt.clone(),
@@ -556,6 +558,7 @@ mod tests {
     use crate::confirm::AlwaysAsk;
 
     const VALID: &str = "https://user.mihoyo.com/qr_code_in_game.html?app_id=4&biz_key=hk4e_cn&expire=4102444800&ticket=66cf3afb2a1c7a308832bd56";
+    const ACCOUNT: &str = "账号「大号」（原神 UID 100000001，通行证 300012345）";
     const OTHER: &str = "https://user.mihoyo.com/qr_code_in_game.html?app_id=4&biz_key=hk4e_cn&expire=4102444800&ticket=77cf3afb2a1c7a308832bd57";
     const TIMEOUT: Duration = Duration::from_secs(300);
 
@@ -605,7 +608,7 @@ mod tests {
         clock: &Clock,
     ) -> ScanSession {
         let (mut session, first) =
-            ScanSession::start(target, "300012345".to_owned(), TIMEOUT, policy, clock.at(0));
+            ScanSession::start(target, ACCOUNT.to_owned(), TIMEOUT, policy, clock.at(0));
         assert_eq!(first, Action::CheckCredential);
         assert_eq!(
             session.handle(Event::CredentialChecked(Ok(())), clock.at(0)),
@@ -659,7 +662,7 @@ mod tests {
         let clock = Clock::new();
         let (session, first) = ScanSession::start(
             game_window(),
-            "300012345".to_owned(),
+            ACCOUNT.to_owned(),
             TIMEOUT,
             Box::new(AlwaysAsk),
             clock.at(0),
@@ -698,7 +701,7 @@ mod tests {
         let clock = Clock::new();
         let (mut session, _) = ScanSession::start(
             game_window(),
-            "300012345".to_owned(),
+            ACCOUNT.to_owned(),
             TIMEOUT,
             Box::new(AlwaysAsk),
             clock.at(0),
@@ -716,7 +719,7 @@ mod tests {
         let clock = Clock::new();
         let (mut session, _) = ScanSession::start(
             game_window(),
-            "300012345".to_owned(),
+            ACCOUNT.to_owned(),
             TIMEOUT,
             Box::new(AlwaysAsk),
             clock.at(0),
@@ -790,7 +793,7 @@ mod tests {
         let prompt = asked(session.handle(frame(found_game(), &[VALID]), clock.at(1)));
         assert_eq!(
             prompt.question(),
-            "在 YuanShen.exe（原神）中发现原神登录二维码。用账号 300012345 登录？确认后，显示这个二维码的设备将登录你的账号。"
+            "在 YuanShen.exe（原神）中发现原神登录二维码。用账号「大号」（原神 UID 100000001，通行证 300012345）登录？确认后，显示这个二维码的设备将登录你的账号。"
         );
         assert!(matches!(
             session.status(),
