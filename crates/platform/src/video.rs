@@ -1,10 +1,12 @@
 //! H.264 解码（设计文档第 6.5 节）：用 Windows Media Foundation 自带的解码器，只取亮度平面。
 //! COM 对象只能在创建它的线程里用，所以解码器要在拉流线程里创建。
 
+use std::marker::PhantomData;
 use std::mem::ManuallyDrop;
 
 use mhy_carry_core::capture::Frame;
 use mhy_carry_core::video::H264Decoder;
+use windows::Win32::Foundation::RPC_E_CHANGED_MODE;
 use windows::Win32::Media::MediaFoundation::{
     CLSID_MSH264DecoderMFT, IMFMediaType, IMFTransform, MF_E_NOTACCEPTING,
     MF_E_TRANSFORM_NEED_MORE_INPUT, MF_E_TRANSFORM_STREAM_CHANGE, MF_LOW_LATENCY,
@@ -15,13 +17,64 @@ use windows::Win32::Media::MediaFoundation::{
     MFVideoArea, MFVideoFormat_H264, MFVideoFormat_NV12,
 };
 use windows::Win32::System::Com::{
-    CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx,
+    CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx, CoUninitialize,
 };
+
+/// 本线程的 COM 初始化，丢弃时撤销。线程已经按别的模式初始化过 COM 时，直接用，什么也不撤销。
+struct Com {
+    initialized: bool,
+    /// 要在初始化的那个线程里撤销，所以不能挪到别的线程。
+    _thread: PhantomData<*const ()>,
+}
+
+impl Com {
+    fn init() -> windows::core::Result<Self> {
+        // SAFETY: 成功时由 Drop 里的 CoUninitialize 配对。
+        let result = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
+        let initialized = result != RPC_E_CHANGED_MODE;
+        if initialized {
+            result.ok()?;
+        }
+        Ok(Self {
+            initialized,
+            _thread: PhantomData,
+        })
+    }
+}
+
+impl Drop for Com {
+    fn drop(&mut self) {
+        if self.initialized {
+            // SAFETY: 和 init 里成功的 CoInitializeEx 配对，在同一个线程里。
+            unsafe { CoUninitialize() };
+        }
+    }
+}
+
+/// Media Foundation 的启动，丢弃时关闭。
+struct MediaFoundation;
+
+impl MediaFoundation {
+    fn start() -> windows::core::Result<Self> {
+        // SAFETY: 成功时由 Drop 里的 MFShutdown 配对。
+        unsafe { MFStartup(MF_VERSION, MFSTARTUP_NOSOCKET)? };
+        Ok(Self)
+    }
+}
+
+impl Drop for MediaFoundation {
+    fn drop(&mut self) {
+        // SAFETY: 和 start 里成功的 MFStartup 配对。
+        unsafe {
+            let _ = MFShutdown();
+        }
+    }
+}
 
 /// 系统自带的 H.264 解码器。
 pub struct MfH264Decoder {
-    /// 放在 Option 里：丢弃时要先释放它，再关 Media Foundation。
-    mft: Option<IMFTransform>,
+    /// 字段按声明的顺序丢弃：先释放解码器，再关 Media Foundation，最后撤销 COM 初始化。
+    mft: IMFTransform,
     /// 解码输出的尺寸（可能对齐到 16 的倍数，比如 1088）。
     width: u32,
     height: u32,
@@ -30,6 +83,8 @@ pub struct MfH264Decoder {
     visible_height: u32,
     /// 每行的字节数。
     stride: usize,
+    _media: MediaFoundation,
+    _com: Com,
 }
 
 impl MfH264Decoder {
@@ -43,10 +98,11 @@ impl MfH264Decoder {
     }
 
     fn create() -> windows::core::Result<Self> {
+        // 中途出错时，已经做了的初始化随着这两个变量丢弃而撤销。
+        let com = Com::init()?;
+        let media = MediaFoundation::start()?;
         // SAFETY: 都是 COM 和 Media Foundation 的普通调用，参数都是本函数里创建的对象。
         unsafe {
-            CoInitializeEx(None, COINIT_MULTITHREADED).ok()?;
-            MFStartup(MF_VERSION, MFSTARTUP_NOSOCKET)?;
             let mft: IMFTransform =
                 CoCreateInstance(&CLSID_MSH264DecoderMFT, None, CLSCTX_INPROC_SERVER)?;
             // 低延迟：解出一帧就交出来，不为重排序攒帧。
@@ -56,23 +112,21 @@ impl MfH264Decoder {
             input.SetGUID(&MF_MT_SUBTYPE, &MFVideoFormat_H264)?;
             mft.SetInputType(0, &input, 0)?;
             let mut decoder = Self {
-                mft: Some(mft),
+                mft,
                 width: 0,
                 height: 0,
                 visible_width: 0,
                 visible_height: 0,
                 stride: 0,
+                _media: media,
+                _com: com,
             };
             decoder.choose_output()?;
-            let mft = decoder.transform();
+            let mft = &decoder.mft;
             mft.ProcessMessage(MFT_MESSAGE_NOTIFY_BEGIN_STREAMING, 0)?;
             mft.ProcessMessage(MFT_MESSAGE_NOTIFY_START_OF_STREAM, 0)?;
             Ok(decoder)
         }
-    }
-
-    fn transform(&self) -> &IMFTransform {
-        self.mft.as_ref().expect("解码器只在丢弃时才取走")
     }
 
     /// 选 NV12 输出，记下尺寸。开始时和分辨率变化时调用。
@@ -81,9 +135,9 @@ impl MfH264Decoder {
         unsafe {
             let mut index = 0;
             loop {
-                let candidate = self.transform().GetOutputAvailableType(0, index)?;
+                let candidate = self.mft.GetOutputAvailableType(0, index)?;
                 if candidate.GetGUID(&MF_MT_SUBTYPE)? == MFVideoFormat_NV12 {
-                    self.transform().SetOutputType(0, &candidate, 0)?;
+                    self.mft.SetOutputType(0, &candidate, 0)?;
                     let size = candidate.GetUINT64(&MF_MT_FRAME_SIZE)?;
                     self.width = (size >> 32) as u32;
                     self.height = size as u32;
@@ -106,7 +160,7 @@ impl MfH264Decoder {
         // SAFETY: 输出缓冲区由我们分配，锁住后只在长度范围内读。
         unsafe {
             loop {
-                let info = self.transform().GetOutputStreamInfo(0)?;
+                let info = self.mft.GetOutputStreamInfo(0)?;
                 let buffer = MFCreateMemoryBuffer(info.cbSize)?;
                 let sample = MFCreateSample()?;
                 sample.AddBuffer(&buffer)?;
@@ -117,7 +171,7 @@ impl MfH264Decoder {
                     pEvents: ManuallyDrop::new(None),
                 }];
                 let mut status = 0u32;
-                let result = self.transform().ProcessOutput(0, &mut output, &mut status);
+                let result = self.mft.ProcessOutput(0, &mut output, &mut status);
                 ManuallyDrop::drop(&mut output[0].pSample);
                 ManuallyDrop::drop(&mut output[0].pEvents);
                 match result {
@@ -173,12 +227,12 @@ impl MfH264Decoder {
             // Media Foundation 的时间单位是 100 纳秒。
             sample.SetSampleTime(i64::from(timestamp_ms) * 10_000)?;
             let mut latest = None;
-            if let Err(error) = self.transform().ProcessInput(0, &sample, 0) {
+            if let Err(error) = self.mft.ProcessInput(0, &sample, 0) {
                 if error.code() != MF_E_NOTACCEPTING {
                     return Err(error);
                 }
                 latest = self.drain()?;
-                self.transform().ProcessInput(0, &sample, 0)?;
+                self.mft.ProcessInput(0, &sample, 0)?;
             }
             Ok(self.drain()?.or(latest))
         }
@@ -209,16 +263,6 @@ impl H264Decoder for MfH264Decoder {
     fn decode(&mut self, annexb: &[u8], timestamp_ms: u32) -> Result<Option<Frame>, String> {
         self.send(annexb, timestamp_ms)
             .map_err(|error| error.to_string())
-    }
-}
-
-impl Drop for MfH264Decoder {
-    fn drop(&mut self) {
-        drop(self.mft.take());
-        // SAFETY: 和 create 里的 MFStartup 配对。
-        unsafe {
-            let _ = MFShutdown();
-        }
     }
 }
 
@@ -276,10 +320,10 @@ mod tests {
 
     /// 用系统 H.264 编码器把同一张图编成几帧 Annex B。
     fn encode(luma: &[u8], count: u32) -> windows::core::Result<Vec<Vec<u8>>> {
+        let _com = Com::init()?;
+        let _media = MediaFoundation::start()?;
         // SAFETY: 普通的 Media Foundation 调用；缓冲区都由我们分配，读写都在长度范围内。
         unsafe {
-            CoInitializeEx(None, COINIT_MULTITHREADED).ok()?;
-            MFStartup(MF_VERSION, MFSTARTUP_NOSOCKET)?;
             let mft: IMFTransform =
                 CoCreateInstance(&CLSID_MSH264EncoderMFT, None, CLSCTX_INPROC_SERVER)?;
             let output = video_type(MFVideoFormat_H264)?;
@@ -307,8 +351,6 @@ mod tests {
             }
             mft.ProcessMessage(MFT_MESSAGE_COMMAND_DRAIN, 0)?;
             drain_encoder(&mft, &mut packets)?;
-            drop(mft);
-            let _ = MFShutdown();
             Ok(packets)
         }
     }

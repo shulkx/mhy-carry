@@ -5,7 +5,8 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use serde::{Deserialize, Serialize};
+use serde::de::IntoDeserializer;
+use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::fsutil::{atomic_write, backup_path, strip_bom};
 
@@ -29,7 +30,8 @@ pub struct Settings {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ScanSettings {
-    /// 默认的截图目标。
+    /// 默认的截图目标。新版本加的目标这个版本不认识，读到时当作“自动”，不把整个文件当损坏。
+    #[serde(deserialize_with = "target_or_auto")]
     pub default_target: TargetKind,
     /// 连续这么多秒没发现登录二维码就停止扫描。直播间不超时。
     pub idle_timeout_secs: u64,
@@ -73,6 +75,13 @@ pub enum TargetKind {
     Monitor,
     /// 直播间（v0.3）。
     Live,
+}
+
+fn target_or_auto<'de, D: Deserializer<'de>>(deserializer: D) -> Result<TargetKind, D::Error> {
+    let name = String::deserialize(deserializer)?;
+    let parsed: Result<TargetKind, serde::de::value::Error> =
+        TargetKind::deserialize(name.as_str().into_deserializer());
+    Ok(parsed.unwrap_or_default())
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -204,6 +213,21 @@ mod tests {
         .unwrap();
         let settings = Settings::load_or_init(&path).unwrap();
         assert_eq!(settings.scan, ScanSettings::default());
+    }
+
+    #[test]
+    fn unknown_targets_from_newer_versions_fall_back_to_auto() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        fs::write(
+            &path,
+            r#"{"format":1,"device_id":"0b8f4a1e-1111-4222-8333-944445555666","active_account":"a1","scan":{"default_target":"douyin","idle_timeout_secs":120}}"#,
+        )
+        .unwrap();
+        let settings = Settings::load_or_init(&path).unwrap();
+        assert_eq!(settings.scan.default_target, TargetKind::Auto);
+        assert_eq!(settings.scan.idle_timeout_secs, 120);
+        assert_eq!(settings.active_account.as_deref(), Some("a1"));
     }
 
     #[test]

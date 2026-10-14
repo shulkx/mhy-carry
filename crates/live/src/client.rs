@@ -1,6 +1,6 @@
 //! 直播客户端（设计文档第 9 节）：不带任何凭证和 Cookie。
 //! 调平台接口时只能访问该平台的接口域名，不跟随跳转；拉流时可以访问接口返回的任意 HTTPS 地址，
-//! 允许跳转（CDN 会重定向）。
+//! 允许跳转（CDN 会重定向）。跳转时不把上一跳的地址（带签名参数）当作 Referer 发出去。
 
 use std::time::Duration;
 
@@ -65,6 +65,7 @@ impl LiveClient {
         let stream = reqwest::Client::builder()
             .user_agent(USER_AGENT)
             .redirect(reqwest::redirect::Policy::limited(5))
+            .referer(false)
             .connect_timeout(CONNECT_TIMEOUT)
             .https_only(!allow_local)
             .build()

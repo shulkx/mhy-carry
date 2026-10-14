@@ -1,6 +1,7 @@
 //! 直播画面来源（设计文档第 6.5 节）：在自己的线程里取流、拉流、拆 FLV、解码，只留最新的一帧。
 //! 扫描循环每次 `next_frame` 拿到的都是最新画面；识别比解码慢时，中间的帧直接丢掉。
 
+use std::future::Future;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
@@ -9,6 +10,7 @@ use mhy_carry_core::capture::{CaptureError, Frame, FrameSource, SourceInfo, Sour
 use mhy_carry_core::flv::{FlvError, FlvParser};
 use mhy_carry_core::room::LiveRoom;
 use mhy_carry_core::video::{CatchUp, H264Decoder};
+use tokio::sync::Notify;
 
 use crate::client::{LiveClient, LiveError};
 use crate::platforms::{Platforms, StreamStatus};
@@ -19,15 +21,21 @@ pub type DecoderFactory = Box<dyn Fn() -> Result<Box<dyn H264Decoder>, String> +
 /// 等新画面最多等这么久；等不到就报告当前状态，扫描会话据此显示“正在连接”“等待开播”。
 const WAIT_FOR_FRAME: Duration = Duration::from_secs(1);
 
-/// 拉流线程的节奏。测试里会调短。
+/// 拉流线程的节奏（设计文档第 6.5 节）。测试里会调短。
 #[derive(Debug, Clone)]
 pub(crate) struct Timing {
     /// 没开播时隔多久再查一次。
     pub offline_poll: Duration,
-    /// 这么久没收到数据就当断线。
+    /// 打开流地址后这么久没有响应、或者拉流中这么久没收到数据，就当断线。
     pub stall: Duration,
-    /// 连续这么多次连不上就停止。
-    pub max_failures: u32,
+    /// 连不上时，第一次重试前等多久；之后每次翻倍，最多等 `retry_max`。
+    pub retry_first: Duration,
+    pub retry_max: Duration,
+    /// 解出画面后又拉了这么久才断的，算正常断线：立刻重连，重新计数。
+    pub stable: Duration,
+    /// 连续连不上至少这么多次、并且持续了 `give_up_after` 以上，才停止。
+    pub give_up_failures: u32,
+    pub give_up_after: Duration,
 }
 
 impl Default for Timing {
@@ -35,7 +43,11 @@ impl Default for Timing {
         Self {
             offline_poll: Duration::from_secs(10),
             stall: Duration::from_secs(10),
-            max_failures: 5,
+            retry_first: Duration::from_secs(1),
+            retry_max: Duration::from_secs(30),
+            stable: Duration::from_secs(30),
+            give_up_failures: 5,
+            give_up_after: Duration::from_secs(60),
         }
     }
 }
@@ -58,6 +70,8 @@ struct Shared {
     changed: Condvar,
     /// 扫描结束，拉流线程该退出了。
     closed: AtomicBool,
+    /// 扫描结束时叫醒拉流线程，不用等网络请求超时。
+    wake: Notify,
 }
 
 impl Shared {
@@ -83,6 +97,24 @@ impl Shared {
 
     fn closed(&self) -> bool {
         self.closed.load(Ordering::Relaxed)
+    }
+
+    /// 等 `future` 完成；扫描结束时马上返回 None。
+    async fn unless_closed<F: Future>(&self, future: F) -> Option<F::Output> {
+        if self.closed() {
+            return None;
+        }
+        tokio::select! {
+            output = future => Some(output),
+            () = self.wake.notified() => None,
+        }
+    }
+
+    /// 睡一会儿；扫描结束时马上返回 false。
+    async fn sleep(&self, duration: Duration) -> bool {
+        self.unless_closed(tokio::time::sleep(duration))
+            .await
+            .is_some()
     }
 }
 
@@ -119,6 +151,7 @@ impl LiveSource {
             }),
             changed: Condvar::new(),
             closed: AtomicBool::new(false),
+            wake: Notify::new(),
         });
         let worker = Arc::clone(&shared);
         std::thread::Builder::new()
@@ -158,8 +191,18 @@ impl FrameSource for LiveSource {
 impl Drop for LiveSource {
     fn drop(&mut self) {
         self.shared.closed.store(true, Ordering::Relaxed);
+        // notify_one 会留下一个许可：拉流线程这时不在等，下次一等就会被叫醒。
+        self.shared.wake.notify_one();
         self.shared.changed.notify_all();
     }
+}
+
+/// 连续连不上的记录。
+#[derive(Default)]
+struct Failures {
+    count: u32,
+    /// 这一串失败里第一次失败的时间。
+    since: Option<Instant>,
 }
 
 /// 拉流线程：取流 → 拉流 → 断了就重连，直到扫描结束或者彻底失败。
@@ -181,28 +224,36 @@ fn run(
         }
     };
     runtime.block_on(async {
-        let mut failures = 0;
+        let mut failures = Failures::default();
         let mut next_url = 0;
-        while !shared.closed() {
-            let reason = match platforms.resolve(client, room).await {
+        loop {
+            let Some(resolved) = shared.unless_closed(platforms.resolve(client, room)).await else {
+                return;
+            };
+            let reason = match resolved {
                 Ok(StreamStatus::Offline) => {
                     shared.set_state(State::Offline);
-                    failures = 0;
-                    sleep_unless_closed(timing.offline_poll, shared).await;
+                    failures = Failures::default();
+                    if !shared.sleep(timing.offline_poll).await {
+                        return;
+                    }
                     continue;
                 }
                 Ok(StreamStatus::Live { urls, referer }) => {
+                    shared.set_state(State::Connecting);
                     // 取流结果里至少有一个地址。每次重连换下一个 CDN。
                     let url = &urls[next_url % urls.len()];
                     next_url += 1;
-                    let pulled = pull(url, referer, decoder, client, timing, shared).await;
-                    if pulled.fatal {
-                        return shared.set_state(State::Failed(pulled.reason));
+                    match pull(url, referer, decoder, client, timing, shared).await {
+                        Pulled::Closed => return,
+                        Pulled::Fatal(reason) => return shared.set_state(State::Failed(reason)),
+                        // 正常拉了一段时间才断：立刻重连，重新计数。
+                        Pulled::Dropped { stable: true, .. } => {
+                            failures = Failures::default();
+                            continue;
+                        }
+                        Pulled::Dropped { reason, .. } => reason,
                     }
-                    if pulled.got_frame {
-                        failures = 0;
-                    }
-                    pulled.reason
                 }
                 // 房间不存在、没有能用的流，重试也没用。
                 Err(error @ (LiveError::RoomNotFound | LiveError::NoStream)) => {
@@ -210,25 +261,39 @@ fn run(
                 }
                 Err(error) => error.to_string(),
             };
-            if shared.closed() {
-                return;
-            }
-            failures += 1;
-            if failures >= timing.max_failures {
+            // 连不上：持续一段时间才停止，中间等一会儿再试。免得网络闪断一下就停，
+            // 也免得一直连不上时不停地请求（设计文档第 6.5 节）。
+            let since = *failures.since.get_or_insert_with(Instant::now);
+            failures.count += 1;
+            if failures.count >= timing.give_up_failures && since.elapsed() >= timing.give_up_after
+            {
                 return shared.set_state(State::Failed(reason));
             }
             shared.set_state(State::Connecting);
+            if !shared.sleep(retry_wait(timing, failures.count)).await {
+                return;
+            }
         }
     });
 }
 
-/// 一次拉流的结果。
-struct Pulled {
-    /// 中间解出过画面。连续失败的次数据此清零。
-    got_frame: bool,
-    reason: String,
-    /// 重连也没用的错误：不是 H.264、电脑没有解码器。
-    fatal: bool,
+/// 第 `count` 次连不上之后等多久：从 `retry_first` 起每次翻倍，最多 `retry_max`。
+fn retry_wait(timing: &Timing, count: u32) -> Duration {
+    let doublings = count.saturating_sub(1).min(16);
+    timing
+        .retry_first
+        .saturating_mul(1 << doublings)
+        .min(timing.retry_max)
+}
+
+/// 一次拉流怎么结束的。
+enum Pulled {
+    /// 扫描结束了。
+    Closed,
+    /// 重连也没用：不是 H.264、电脑没有解码器。
+    Fatal(String),
+    /// 断线或出错，可以重连。`stable` 表示之前正常拉了一段时间。
+    Dropped { reason: String, stable: bool },
 }
 
 /// 拉一个流地址，直到断线、出错或者扫描结束。
@@ -240,52 +305,53 @@ async fn pull(
     timing: &Timing,
     shared: &Shared,
 ) -> Pulled {
-    let ended = |reason: String, got_frame| Pulled {
-        got_frame,
-        reason,
-        fatal: false,
-    };
     // 每次连接都用新的解码器：断线后旧解码器里的状态没用了，分辨率也可能变了。
     let mut decoder = match decoder() {
         Ok(decoder) => decoder,
-        Err(reason) => {
-            return Pulled {
-                got_frame: false,
-                reason,
-                fatal: true,
-            };
-        }
+        Err(reason) => return Pulled::Fatal(reason),
     };
-    let mut response = match client.open_stream(url, referer).await {
-        Ok(response) => response,
-        Err(error) => return ended(error.to_string(), false),
+    // 第一次解出画面的时间。从这时起拉够 `stable` 才断的，算正常断线。
+    let mut first_frame: Option<Instant> = None;
+    let dropped = |reason: String, first_frame: Option<Instant>| Pulled::Dropped {
+        reason,
+        stable: first_frame.is_some_and(|first| first.elapsed() >= timing.stable),
+    };
+    // 服务器接受了连接却一直不回应时，也按断线处理。
+    let opened = shared
+        .unless_closed(tokio::time::timeout(
+            timing.stall,
+            client.open_stream(url, referer),
+        ))
+        .await;
+    let mut response = match opened {
+        None => return Pulled::Closed,
+        Some(Err(_)) => return dropped("直播服务器没有响应".to_owned(), None),
+        Some(Ok(Err(error))) => return dropped(error.to_string(), None),
+        Some(Ok(Ok(response))) => response,
     };
     let mut parser = FlvParser::new();
     let mut catch_up = CatchUp::default();
     let started = Instant::now();
-    let mut got_frame = false;
-    while !shared.closed() {
-        let chunk = match tokio::time::timeout(timing.stall, response.chunk()).await {
-            Err(_) => {
-                return ended(
-                    format!("{} 秒没收到直播数据", timing.stall.as_secs()),
-                    got_frame,
-                );
+    loop {
+        let read = shared
+            .unless_closed(tokio::time::timeout(timing.stall, response.chunk()))
+            .await;
+        let chunk = match read {
+            None => return Pulled::Closed,
+            Some(Err(_)) => {
+                let reason = format!("{} 秒没收到直播数据", timing.stall.as_secs());
+                return dropped(reason, first_frame);
             }
-            Ok(Err(error)) => return ended(LiveError::network(error).to_string(), got_frame),
-            Ok(Ok(None)) => return ended("直播流断开了".to_owned(), got_frame),
-            Ok(Ok(Some(chunk))) => chunk,
+            Some(Ok(Err(error))) => {
+                return dropped(LiveError::network(error).to_string(), first_frame);
+            }
+            Some(Ok(Ok(None))) => return dropped("直播流断开了".to_owned(), first_frame),
+            Some(Ok(Ok(Some(chunk)))) => chunk,
         };
         let frames = match parser.push(&chunk) {
             Ok(frames) => frames,
-            Err(error @ FlvError::NotH264) => {
-                return Pulled {
-                    got_frame,
-                    reason: error.to_string(),
-                    fatal: true,
-                };
-            }
-            Err(error) => return ended(error.to_string(), got_frame),
+            Err(error @ FlvError::NotH264) => return Pulled::Fatal(error.to_string()),
+            Err(error) => return dropped(error.to_string(), first_frame),
         };
         for video in frames {
             let received_ms = started.elapsed().as_millis() as u64;
@@ -294,26 +360,13 @@ async fn pull(
             }
             match decoder.decode(&video.annexb, video.timestamp_ms) {
                 Ok(Some(frame)) => {
-                    got_frame = true;
+                    first_frame.get_or_insert_with(Instant::now);
                     shared.publish(frame);
                 }
                 Ok(None) => {}
-                Err(message) => return ended(format!("解码失败：{message}"), got_frame),
+                Err(message) => return dropped(format!("解码失败：{message}"), first_frame),
             }
         }
-    }
-    ended(String::new(), got_frame)
-}
-
-/// 分小段睡，扫描结束时能尽快退出线程。
-async fn sleep_unless_closed(duration: Duration, shared: &Shared) {
-    let deadline = Instant::now() + duration;
-    while !shared.closed() {
-        let left = deadline.saturating_duration_since(Instant::now());
-        if left.is_zero() {
-            return;
-        }
-        tokio::time::sleep(left.min(Duration::from_millis(200))).await;
     }
 }
 
@@ -371,25 +424,43 @@ mod tests {
         bytes
     }
 
+    /// 测试用的节奏：重试只等几十毫秒，连不上 2 次就停止。
     fn timing() -> Timing {
         Timing {
             offline_poll: Duration::from_millis(50),
             stall: Duration::from_secs(2),
-            max_failures: 2,
+            retry_first: Duration::from_millis(20),
+            retry_max: Duration::from_millis(50),
+            stable: Duration::from_secs(3600),
+            give_up_failures: 2,
+            give_up_after: Duration::ZERO,
         }
     }
 
     fn start(server: &MockServer) -> LiveSource {
+        start_with(server, fake_decoder(), timing())
+    }
+
+    fn start_with(server: &MockServer, decoder: DecoderFactory, timing: Timing) -> LiveSource {
         LiveSource::start_with(
             LiveRoom::Bilibili { id: 12345 },
-            fake_decoder(),
+            decoder,
             LiveClient::for_tests(),
             Platforms {
                 bilibili: Bilibili::at(&server.uri()),
             },
-            timing(),
+            timing,
         )
         .unwrap()
+    }
+
+    /// 流地址被请求了几次。
+    async fn stream_requests(server: &MockServer) -> usize {
+        let requests = server.received_requests().await.unwrap_or_default();
+        requests
+            .iter()
+            .filter(|request| request.url.path() == "/live/stream.flv")
+            .count()
     }
 
     /// next_frame 会阻塞，放到阻塞线程里调用，免得卡住假服务器。
@@ -468,6 +539,107 @@ mod tests {
             result,
             Err(CaptureError::LiveFailed("直播平台返回 HTTP 404".to_owned()))
         );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn servers_that_never_answer_count_as_failures() {
+        let server = MockServer::start().await;
+        mount_room(&server, true, &[server.uri()]).await;
+        Mock::given(path("/live/stream.flv"))
+            .respond_with(ResponseTemplate::new(200).set_delay(Duration::from_secs(30)))
+            .mount(&server)
+            .await;
+        let timing = Timing {
+            stall: Duration::from_millis(300),
+            ..timing()
+        };
+        let (_source, result) = settle(start_with(&server, fake_decoder(), timing)).await;
+        assert_eq!(
+            result,
+            Err(CaptureError::LiveFailed("直播服务器没有响应".to_owned()))
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn failures_are_retried_until_the_time_limit() {
+        let server = MockServer::start().await;
+        mount_room(&server, true, &[server.uri()]).await;
+        Mock::given(path("/live/stream.flv"))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&server)
+            .await;
+        let timing = Timing {
+            give_up_after: Duration::from_millis(600),
+            ..timing()
+        };
+        let (_source, result) = settle(start_with(&server, fake_decoder(), timing)).await;
+        assert_eq!(
+            result,
+            Err(CaptureError::LiveFailed("直播平台返回 HTTP 404".to_owned()))
+        );
+        // 每次最多等 50 毫秒，600 毫秒里远不止试 2 次。
+        assert!(stream_requests(&server).await > 4);
+    }
+
+    #[test]
+    fn retries_wait_longer_each_time() {
+        let timing = Timing::default();
+        let waits: Vec<u64> = (1..=7)
+            .map(|count| retry_wait(&timing, count).as_secs())
+            .collect();
+        assert_eq!(waits, [1, 2, 4, 8, 16, 30, 30]);
+        assert_eq!(retry_wait(&timing, u32::MAX), Duration::from_secs(30));
+    }
+
+    /// 只记下自己有没有被丢弃的解码器。
+    struct WatchedDecoder(Arc<AtomicBool>);
+
+    impl H264Decoder for WatchedDecoder {
+        fn decode(&mut self, _annexb: &[u8], _timestamp_ms: u32) -> Result<Option<Frame>, String> {
+            Ok(None)
+        }
+    }
+
+    impl Drop for WatchedDecoder {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::SeqCst);
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn stopping_ends_the_worker_right_away() {
+        // 服务器 30 秒后才回应。扫描结束时拉流线程不能等到那时才退出。
+        let server = MockServer::start().await;
+        mount_room(&server, true, &[server.uri()]).await;
+        Mock::given(path("/live/stream.flv"))
+            .respond_with(ResponseTemplate::new(200).set_delay(Duration::from_secs(30)))
+            .mount(&server)
+            .await;
+        let dropped = Arc::new(AtomicBool::new(false));
+        let flag = Arc::clone(&dropped);
+        let decoder: DecoderFactory = Box::new(move || {
+            Ok(Box::new(WatchedDecoder(Arc::clone(&flag))) as Box<dyn H264Decoder>)
+        });
+        let timing = Timing {
+            stall: Duration::from_secs(60),
+            ..timing()
+        };
+        let source = start_with(&server, decoder, timing);
+        for _ in 0..50 {
+            if stream_requests(&server).await > 0 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        assert_eq!(stream_requests(&server).await, 1);
+        drop(source);
+        for _ in 0..50 {
+            if dropped.load(Ordering::SeqCst) {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        panic!("扫描结束 1 秒后拉流线程还没退出");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

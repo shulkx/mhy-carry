@@ -19,6 +19,9 @@ pub enum FlvError {
     NotH264,
     #[error("直播流的 H.264 配置不对")]
     BadConfig,
+    /// 已经按 H.264 解了一段，又冒出别的编码：数据错位了，重连就好。
+    #[error("直播数据错位了")]
+    Corrupt,
 }
 
 const START_CODE: [u8; 4] = [0, 0, 0, 1];
@@ -115,7 +118,11 @@ impl Avc {
         };
         // 增强 FLV（H.265 等）把最高位置 1；传统 FLV 的低 4 位是编码 ID，7 是 H.264。
         if first & 0x80 != 0 || first & 0x0f != CODEC_AVC {
-            return Err(FlvError::NotH264);
+            return Err(if self.nal_length_size == 0 {
+                FlvError::NotH264
+            } else {
+                FlvError::Corrupt
+            });
         }
         // 第 2 个字节是包的类型，后面 3 个字节是合成时间偏移，用不上。
         if body.len() < 5 {
@@ -335,6 +342,14 @@ mod tests {
                 "{len}"
             );
         }
+    }
+
+    #[test]
+    fn other_codecs_after_h264_mean_the_data_is_corrupt() {
+        let mut bytes = header();
+        bytes.extend(tag(TAG_VIDEO, 0, &config()));
+        bytes.extend(tag(TAG_VIDEO, 33, &[0x1c, 1, 0, 0, 0]));
+        assert_eq!(FlvParser::new().push(&bytes), Err(FlvError::Corrupt));
     }
 
     #[test]

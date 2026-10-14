@@ -8,6 +8,8 @@ use crate::platforms::StreamStatus;
 
 /// 接口只能访问这个域名（设计文档第 9 节）。
 const API_HOST: &str = "api.live.bilibili.com";
+/// room_init 对不存在的房间返回的错误码（2026-10-15 实测）。其他错误码可能是临时的，会重试。
+const ROOM_NOT_FOUND: i64 = 60004;
 const REFERER: &str = "https://live.bilibili.com/";
 
 pub(crate) struct Bilibili {
@@ -45,8 +47,15 @@ impl Bilibili {
                 REFERER,
             )
             .await?;
-        if init["code"].as_i64() != Some(0) {
-            return Err(LiveError::RoomNotFound);
+        match init["code"].as_i64() {
+            Some(0) => {}
+            Some(ROOM_NOT_FOUND) => return Err(LiveError::RoomNotFound),
+            code => {
+                return Err(LiveError::Other(format!(
+                    "B 站直播接口返回错误码 {}",
+                    code.map_or("（无）".to_owned(), |code| code.to_string())
+                )));
+            }
         }
         let real_id = init["data"]["room_id"]
             .as_u64()
@@ -234,6 +243,25 @@ pub(crate) mod tests {
             .resolve(&LiveClient::for_tests(), 12345)
             .await;
         assert!(matches!(result, Err(LiveError::RoomNotFound)), "{result:?}");
+    }
+
+    #[tokio::test]
+    async fn other_error_codes_can_be_retried() {
+        let server = MockServer::start().await;
+        Mock::given(path("/room/v1/Room/room_init"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(json!({"code": -412, "message": "请求被拦截", "data": null})),
+            )
+            .mount(&server)
+            .await;
+        let result = Bilibili::at(&server.uri())
+            .resolve(&LiveClient::for_tests(), 12345)
+            .await;
+        assert!(
+            matches!(&result, Err(LiveError::Other(message)) if message == "B 站直播接口返回错误码 -412"),
+            "{result:?}"
+        );
     }
 
     #[tokio::test]
