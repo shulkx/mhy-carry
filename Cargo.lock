@@ -2806,6 +2806,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "mhy-carry-live"
+version = "0.2.0"
+dependencies = [
+ "mhy-carry-core",
+ "reqwest",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tokio",
+ "url",
+ "wiremock",
+]
+
+[[package]]
 name = "mhy-carry-platform"
 version = "0.2.0"
 dependencies = [
