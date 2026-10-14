@@ -29,14 +29,12 @@ pub async fn run(source: QrSource) -> CliResult {
 
     let ctx = Context::load()?;
     let file = ctx.store.load()?;
-    let account = file
-        .accounts
-        .first()
-        .ok_or("还没有绑定账号，先运行 mhy-carry-cli bind")?;
+    let account = ctx.pick_account(&file, None)?;
 
     let question = format!(
-        "在{from}中发现{}登录二维码。用账号 {} 登录？确认后，显示这个二维码的设备将登录你的账号。",
-        qr.game.display_name, account.uid
+        "在{from}中发现{}登录二维码。用{}登录？确认后，显示这个二维码的设备将登录你的账号。",
+        qr.game.display_name,
+        account.describe()
     );
     if !prompt::confirm(&question)? {
         println!("已取消。");

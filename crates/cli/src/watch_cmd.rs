@@ -40,26 +40,23 @@ impl From<Target> for TargetKind {
     }
 }
 
-pub async fn run(target: Option<TargetKind>) -> CliResult {
+pub async fn run(target: Option<TargetKind>, account: Option<String>) -> CliResult {
     let ctx = Context::load()?;
-    let account = ctx
-        .store
-        .load()?
-        .accounts
-        .into_iter()
-        .next()
-        .ok_or("还没有绑定账号，先运行 mhy-carry-cli bind")?;
+    let mut file = ctx.store.load()?;
+    let id = ctx.pick_account(&file, account.as_deref())?.id.clone();
+    let account = file.remove(&id).expect("刚找到的账号");
+    let label = account.describe();
     let source = choose_source(target.unwrap_or(ctx.settings.scan.default_target))?;
+    println!("用{label}扫描，按 Ctrl+C 结束。");
     let job = ScanJob {
         source,
         decoder: Box::new(RxingDecoder),
-        account: account.describe(),
+        account: label,
         uid: account.uid,
         mid: account.mid,
         stoken: account.stoken,
         idle_timeout: ctx.settings.scan.idle_timeout(),
     };
-    println!("开始扫描，按 Ctrl+C 结束。");
     // 命令行没有“停止”按钮，Ctrl+C 直接结束程序。
     let (_stop, stop_signal) = mpsc::channel(1);
     run_scan(&ctx.api, job, &TerminalUi::default(), stop_signal).await;

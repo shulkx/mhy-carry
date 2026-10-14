@@ -2,29 +2,23 @@
 
 use std::time::Duration;
 
-use mhy_carry_api::{ApiError, BindStatus, retcode};
-use mhy_carry_core::account::Account;
+use mhy_carry_api::{ApiClient, ApiError, BindStatus, BoundAccount, Credentials, retcode};
+use mhy_carry_core::account::{Account, GameRole};
 use mhy_carry_core::store::AccountStore;
 use qrcode::QrCode;
 use qrcode::render::unicode::Dense1x2;
 
+use crate::CliResult;
 use crate::context::Context;
-use crate::{CliResult, prompt};
 
 const POLL_INTERVAL: Duration = Duration::from_secs(2);
 /// 查询状态没有副作用，网络出错允许重试一次，连续两次就放弃。
 const MAX_NETWORK_ERRORS_IN_A_ROW: u32 = 2;
 
 pub async fn run() -> CliResult {
-    let ctx = Context::load()?;
-    let mut file = ctx.store.load()?;
-    if let Some(existing) = file.accounts.first() {
-        let question = format!("已经绑定了账号 {}，要换成新账号吗？", existing.uid);
-        if !prompt::confirm(&question)? {
-            println!("已取消。");
-            return Ok(());
-        }
-    }
+    let mut ctx = Context::load()?;
+    // 先读一次：账号文件格式比本程序新、读写出错时，不用让你白扫一次码。
+    ctx.store.load()?;
 
     let qr = ctx.api.create_bind_qr().await?;
     println!("请用米游社 App 扫描下面的二维码，并在手机上确认登录：");
@@ -44,16 +38,7 @@ pub async fn run() -> CliResult {
                     announced_scanned = true;
                 }
             }
-            Ok(BindStatus::Confirmed(bound)) => {
-                let account =
-                    Account::new(bound.uid, bound.mid, bound.stoken, jiff::Timestamp::now());
-                let uid = account.uid.clone();
-                file.accounts = vec![account];
-                ctx.store.save(&file)?;
-                println!("绑定成功：{uid}");
-                println!("凭证已保存（明文）：{}", ctx.store.path().display());
-                return Ok(());
-            }
+            Ok(BindStatus::Confirmed(bound)) => return save(&mut ctx, bound).await,
             Err(ApiError::Network(_)) if network_errors + 1 < MAX_NETWORK_ERRORS_IN_A_ROW => {
                 network_errors += 1;
             }
@@ -63,6 +48,62 @@ pub async fn run() -> CliResult {
             Err(error) => return Err(error.into()),
         }
     }
+}
+
+/// 保存绑定的账号并设为使用中，再查一次原神角色（设计文档第 6.1、6.4 节）。
+async fn save(ctx: &mut Context, bound: BoundAccount) -> CliResult {
+    let mut file = ctx.store.load()?;
+    let saved = file.upsert(Account::new(
+        bound.uid,
+        bound.mid,
+        bound.stoken,
+        jiff::Timestamp::now(),
+    ));
+    ctx.store.save(&file)?;
+    ctx.set_active(Some(saved.id.clone()))?;
+
+    let role = {
+        let account = file.get(&saved.id).expect("刚保存的账号");
+        if saved.added {
+            println!("已添加账号：通行证 {}，并设为使用中。", account.uid);
+        } else {
+            println!(
+                "已更新账号 {} 的凭证，并设为使用中。",
+                account.display_name()
+            );
+        }
+        println!("凭证已保存（明文）：{}", ctx.store.path().display());
+        lookup_role(&ctx.api, account).await
+    };
+    match role {
+        Ok(Some(role)) => {
+            println!(
+                "原神角色：{} Lv.{}（UID {}）",
+                role.nickname, role.level, role.game_uid
+            );
+            file.get_mut(&saved.id).expect("刚保存的账号").game_role = Some(role);
+            ctx.store.save(&file)?;
+        }
+        Ok(None) => println!("这个通行证在原神官服没有角色。"),
+        Err(message) => println!("查原神角色失败（不影响使用）：{message}"),
+    }
+    Ok(())
+}
+
+/// 查原神角色。返回 Err 时是给人看的原因。
+async fn lookup_role(api: &ApiClient, account: &Account) -> Result<Option<GameRole>, String> {
+    let credentials = Credentials {
+        stoken: &account.stoken,
+        mid: &account.mid,
+    };
+    let token = api
+        .check_stoken(&credentials)
+        .await
+        .map_err(|error| error.to_string())?
+        .ok_or("服务器没有返回 cookie_token")?;
+    api.genshin_role(&account.uid, &token)
+        .await
+        .map_err(|error| error.to_string())
 }
 
 /// 把二维码画成终端字符。按深色背景反色，白块是二维码的底色。

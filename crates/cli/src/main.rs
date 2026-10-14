@@ -8,7 +8,7 @@ mod watch_cmd;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand};
 
 /// MhyCarry 命令行工具：验证协议和调试用。
 #[derive(Parser)]
@@ -22,12 +22,8 @@ struct Cli {
 enum Command {
     /// 用米游社 App 扫码绑定账号
     Bind,
-    /// 查看已绑定的账号，或者解绑
-    Account {
-        /// 解绑，删除本机保存的账号凭证
-        #[arg(long)]
-        remove: bool,
-    },
+    /// 查看已绑定的账号；切换使用中的账号、写备注、解绑
+    Account(AccountArgs),
     /// 用已绑定的账号确认一个游戏登录二维码
     Login {
         /// 二维码里的网址
@@ -42,7 +38,56 @@ enum Command {
         /// 截图目标；不填时用设置里的默认值（auto）
         #[arg(long, value_enum)]
         target: Option<watch_cmd::Target>,
+        /// 用哪个账号（通行证 ID）；不填时用使用中的账号
+        #[arg(long, value_name = "通行证ID")]
+        account: Option<String>,
     },
+}
+
+/// 不带参数时列出账号。下面几个参数一次只能用一个。
+#[derive(Args)]
+#[group(multiple = false)]
+struct AccountArgs {
+    /// 逐个检查凭证、查原神角色（要联网）
+    #[arg(long)]
+    refresh: bool,
+    /// 设为使用中的账号
+    #[arg(long = "use", value_name = "通行证ID")]
+    use_account: Option<String>,
+    /// 给账号写备注；备注写 "" 表示去掉
+    #[arg(long, num_args = 2, value_names = ["通行证ID", "备注"])]
+    note: Option<Vec<String>>,
+    /// 解绑这个账号，删除本机保存的凭证
+    #[arg(long, value_name = "通行证ID")]
+    remove: Option<String>,
+    /// 删除账号文件损坏时留下的旧文件
+    #[arg(long)]
+    remove_leftovers: bool,
+}
+
+impl AccountArgs {
+    fn action(self) -> account_cmd::Action {
+        use account_cmd::Action;
+        if self.refresh {
+            return Action::Refresh;
+        }
+        if self.remove_leftovers {
+            return Action::RemoveLeftovers;
+        }
+        if let Some(uid) = self.use_account {
+            return Action::Use(uid);
+        }
+        if let Some(uid) = self.remove {
+            return Action::Remove(uid);
+        }
+        if let Some([uid, note]) = self
+            .note
+            .and_then(|pair| <[String; 2]>::try_from(pair).ok())
+        {
+            return Action::Note { uid, note };
+        }
+        Action::List
+    }
 }
 
 pub type CliResult = Result<(), Box<dyn std::error::Error>>;
@@ -52,7 +97,7 @@ async fn main() -> ExitCode {
     let cli = Cli::parse();
     let result = match cli.command {
         Command::Bind => bind_cmd::run().await,
-        Command::Account { remove } => account_cmd::run(remove),
+        Command::Account(args) => account_cmd::run(args.action()).await,
         Command::Login { url, image } => {
             let source = match (url, image) {
                 (Some(url), _) => login_cmd::QrSource::Url(url),
@@ -61,7 +106,7 @@ async fn main() -> ExitCode {
             };
             login_cmd::run(source).await
         }
-        Command::Watch { target } => watch_cmd::run(target.map(Into::into)).await,
+        Command::Watch { target, account } => watch_cmd::run(target.map(Into::into), account).await,
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,
