@@ -6,12 +6,15 @@ const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
 
 const $ = (id) => document.getElementById(id);
-const TARGETS = ["auto", "window", "monitor"];
+const TARGETS = ["auto", "window", "monitor", "live"];
 const CREDENTIAL_LABELS = { unchecked: "凭证未检查", valid: "凭证有效", invalid: "凭证已失效" };
 const SHORT_CREDENTIAL = { unchecked: "未检查", valid: "有效", invalid: "已失效" };
 const BUSY_BIND = ["requesting", "waiting_scan", "waiting_confirm"];
-const WAITING = ["checking_credential", "waiting_for_window", "paused", "game_in_background", "awaiting_confirm"];
-const BAD_STOPS = ["credential_invalid", "target_gone", "capture_failing", "credential_check_failed"];
+const WAITING = [
+  "checking_credential", "waiting_for_window", "paused", "game_in_background", "awaiting_confirm",
+  "waiting_for_live", "connecting_live",
+];
+const BAD_STOPS = ["credential_invalid", "target_gone", "capture_failing", "credential_check_failed", "live_failed"];
 const MAX_NOTE_CHARS = 20;
 
 let state = null;
@@ -307,7 +310,7 @@ async function loadTargets(kind) {
   const keep = $("target-select").value;
   targetList = [];
   fillTargets(keep);
-  if (kind === "auto") return;
+  if (kind === "auto" || kind === "live") return;
   targetList = (await call("list_targets", { kind })) ?? [];
   fillTargets(keep);
 }
@@ -330,9 +333,19 @@ function renderScan() {
     node.setAttribute("aria-pressed", String(name === chosen));
     node.disabled = !idle;
   }
-  $("target-pick").hidden = chosen === "auto";
+  $("target-pick").hidden = chosen !== "window" && chosen !== "monitor";
   $("target-select").disabled = !idle;
   $("target-refresh").disabled = !idle;
+  const room = $("live-room");
+  $("live-pick").hidden = chosen !== "live";
+  room.disabled = !idle;
+  // 没改过的时候填上次的直播间。
+  if (document.activeElement !== room && room.dataset.edited !== "1") room.value = state.settings.live_room;
+  // 自动确认记在设置里，扫描中不能改（设计文档第 6.3 节）。
+  const auto = $("auto-confirm");
+  auto.checked = state.settings.auto_confirm;
+  auto.disabled = !idle;
+  $("auto-warning").hidden = !state.settings.auto_confirm;
 
   const start = $("scan-button");
   const active = activeAccount();
@@ -408,8 +421,21 @@ $("scan-button").addEventListener("click", () => {
     return;
   }
   const chosen = currentTarget();
-  const id = chosen === "auto" ? null : Number($("target-select").value) || null;
-  call("scan_start", { target: chosen, id });
+  const id = chosen === "window" || chosen === "monitor" ? Number($("target-select").value) || null : null;
+  const room = chosen === "live" ? $("live-room").value : null;
+  call("scan_start", { target: chosen, id, room });
+});
+$("live-room").addEventListener("input", () => {
+  $("live-room").dataset.edited = "1";
+});
+// 在输入框里按回车直接开始扫描。
+$("live-room").addEventListener("keydown", (event) => {
+  if (event.key === "Enter" && !$("scan-button").disabled) $("scan-button").click();
+});
+$("auto-confirm").addEventListener("change", async () => {
+  await call("set_auto_confirm", { on: $("auto-confirm").checked });
+  // 没改成时按快照退回原来的样子。
+  renderScan();
 });
 $("setting-target").addEventListener("change", saveSettings);
 $("setting-timeout").addEventListener("change", saveSettings);

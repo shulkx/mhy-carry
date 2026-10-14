@@ -24,12 +24,22 @@
       <button type="button" id="target-auto">自动</button>
       <button type="button" id="target-window">指定窗口</button>
       <button type="button" id="target-monitor">显示器</button>
+      <button type="button" id="target-live">直播间</button>
     </div>
     <div class="target-pick" id="target-pick" hidden>
       <select id="target-select" aria-label="选择截图目标"></select>
       <button type="button" class="btn" id="target-refresh">刷新</button>
     </div>
-    <button type="button" class="btn primary big" id="scan-button">开始扫描</button>
+    <div class="target-pick" id="live-pick" hidden>
+      <input type="text" id="live-room" aria-label="直播间网址或房间号" placeholder="B 站直播间网址或房间号" autocomplete="off" spellcheck="false">
+    </div>
+    <div class="start-row">
+      <button type="button" class="btn primary big" id="scan-button">开始扫描</button>
+      <label class="auto-confirm" title="识别到原神登录码直接登录，不再问你">
+        <input type="checkbox" id="auto-confirm"> 自动确认
+      </label>
+    </div>
+    <div class="auto-warning" id="auto-warning" hidden>自动确认已开启：发现原神登录码会直接登录，不再问你。</div>
     <div class="status" aria-live="polite">
       <span class="dot" id="status-dot" aria-hidden="true"></span>
       <div>
@@ -48,6 +58,7 @@
         <option value="auto">自动找原神窗口</option>
         <option value="window">指定窗口</option>
         <option value="monitor">显示器</option>
+        <option value="live">直播间</option>
       </select>
       <label for="setting-timeout">无二维码自动停止</label>
       <span><input id="setting-timeout" type="number" min="30" step="30"> 秒（最少 30）</span>

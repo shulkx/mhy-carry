@@ -2747,6 +2747,7 @@ dependencies = [
  "jiff",
  "mhy-carry-api",
  "mhy-carry-core",
+ "mhy-carry-live",
  "mhy-carry-platform",
  "mhy-carry-runner",
  "qrcode",

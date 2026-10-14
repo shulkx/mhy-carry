@@ -29,6 +29,7 @@ fn main() {
             commands::scan_start,
             commands::scan_stop,
             commands::update_settings,
+            commands::set_auto_confirm,
         ])
         .run(tauri::generate_context!());
     // 正式版没有控制台，启动失败（比如数据目录不可用、设置文件读写出错）时弹窗说明原因。

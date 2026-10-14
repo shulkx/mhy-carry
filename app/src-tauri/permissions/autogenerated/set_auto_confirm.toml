@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-set-auto-confirm"
+description = "Enables the set_auto_confirm command without any pre-configured scope."
+commands.allow = ["set_auto_confirm"]
+
+[[permission]]
+identifier = "deny-set-auto-confirm"
+description = "Denies the set_auto_confirm command without any pre-configured scope."
+commands.deny = ["set_auto_confirm"]

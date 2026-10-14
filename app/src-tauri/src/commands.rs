@@ -7,11 +7,15 @@ use mhy_carry_core::account::{Account, normalize_note};
 use mhy_carry_core::capture::FrameSource;
 use mhy_carry_core::decode::RxingDecoder;
 use mhy_carry_core::games::GAMES;
+use mhy_carry_core::room::parse_room;
 use mhy_carry_core::settings::TargetKind;
 use mhy_carry_core::store::AccountStore;
+use mhy_carry_core::video::H264Decoder;
+use mhy_carry_live::LiveSource;
 use mhy_carry_platform::capture::{
     GameWindowSource, MonitorSource, PickedWindowSource, list_monitors, list_windows,
 };
+use mhy_carry_platform::video::MfH264Decoder;
 use mhy_carry_runner::ScanJob;
 use serde::Serialize;
 use tauri::{AppHandle, Manager, State};
@@ -234,11 +238,17 @@ pub fn list_targets(kind: TargetKind) -> CommandResult<Vec<TargetView>> {
     })
 }
 
-/// 用使用中的账号开始扫描（设计文档第 6.2、6.4 节）。
+/// 用使用中的账号开始扫描（设计文档第 6.2、6.4、6.5 节）。`room` 只在直播间时用，
+/// 会记进设置，下次自动填上。
 #[tauri::command(rename_all = "snake_case")]
-pub async fn scan_start(app: AppHandle, target: TargetKind, id: Option<u32>) -> CommandResult {
+pub async fn scan_start(
+    app: AppHandle,
+    target: TargetKind,
+    id: Option<u32>,
+    room: Option<String>,
+) -> CommandResult {
     let (stop, stop_signal) = mpsc::channel(1);
-    let (idle_timeout, active) = {
+    let (idle_timeout, active, auto_confirm) = {
         let shared = app.state::<Shared>();
         let mut model = shared.lock();
         if model.scanning() {
@@ -247,16 +257,33 @@ pub async fn scan_start(app: AppHandle, target: TargetKind, id: Option<u32>) -> 
         if model.bind.in_progress() {
             return Err("绑定中不能开始扫描。".to_owned());
         }
+        if target == TargetKind::Live {
+            let room = room.as_deref().unwrap_or_default();
+            parse_room(room).map_err(|error| error.to_string())?;
+            // 记住这次的直播间。写不进去也不影响这次扫描。
+            model.settings.scan.live_room = room.trim().to_owned();
+            let _ = model.settings.save(&shared.settings_path);
+        }
         model.scan_stop = Some(stop);
         model.last_notice = None;
         model.notice_at = None;
         (
             model.settings.scan.idle_timeout(),
             model.settings.active_account.clone(),
+            model.settings.scan.auto_confirm,
         )
     };
-    match prepare_job(&app, target, id, idle_timeout, active.as_deref()) {
-        Ok((job, account_id)) => {
+    let job = prepare_job(
+        &app,
+        target,
+        id,
+        room.as_deref(),
+        idle_timeout,
+        active.as_deref(),
+    );
+    match job {
+        Ok((mut job, account_id)) => {
+            job.auto_confirm = auto_confirm;
             app.state::<Shared>().lock().scan_account = Some(account_id);
             scan::spawn(app, job, stop_signal);
             Ok(())
@@ -272,6 +299,7 @@ fn prepare_job(
     app: &AppHandle,
     target: TargetKind,
     id: Option<u32>,
+    room: Option<&str>,
     idle_timeout: Duration,
     active: Option<&str>,
 ) -> CommandResult<(ScanJob, String)> {
@@ -284,7 +312,13 @@ fn prepare_job(
     let account = file.remove(&account_id).ok_or(ACCOUNT_GONE)?;
     let source: Box<dyn FrameSource + Send> = match target {
         TargetKind::Auto => Box::new(GameWindowSource::new(GAMES)),
-        TargetKind::Live => return Err("直播间还没接上，下一个任务接。".to_owned()),
+        TargetKind::Live => {
+            let room = parse_room(room.unwrap_or_default()).map_err(|error| error.to_string())?;
+            Box::new(
+                LiveSource::start(room, Box::new(system_decoder))
+                    .map_err(|error| error.to_string())?,
+            )
+        }
         TargetKind::Window => {
             let id = id.ok_or("先选择要扫描的窗口。")?;
             let window = list_windows()
@@ -315,6 +349,31 @@ fn prepare_job(
         auto_confirm: false,
     };
     Ok((job, account_id))
+}
+
+/// 在拉流线程里创建系统 H.264 解码器。
+fn system_decoder() -> Result<Box<dyn H264Decoder>, String> {
+    MfH264Decoder::new().map(|decoder| Box::new(decoder) as Box<dyn H264Decoder>)
+}
+
+/// 打开或关闭自动确认，记在设置里（设计文档第 6.5 节）。扫描中不能改：这次扫描的策略开始时就定了。
+#[tauri::command]
+pub fn set_auto_confirm(app: AppHandle, on: bool) -> CommandResult {
+    let shared = app.state::<Shared>();
+    let mut result = Ok(());
+    update(&app, |model| {
+        if model.scanning() {
+            result = Err("扫描中不能改，先停止扫描。".to_owned());
+            return;
+        }
+        let previous = model.settings.scan.auto_confirm;
+        model.settings.scan.auto_confirm = on;
+        if let Err(error) = model.settings.save(&shared.settings_path) {
+            model.settings.scan.auto_confirm = previous;
+            result = Err(error.to_string());
+        }
+    });
+    result
 }
 
 #[tauri::command]

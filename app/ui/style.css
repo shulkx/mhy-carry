@@ -223,11 +223,18 @@ button, select, input { font: inherit; color: inherit; }
 .switch-row .row-id { grid-column: 3; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .switcher-foot { border-top: 1px solid var(--line); margin-top: 4px; padding: 6px 6px 2px; font-size: 12px; color: var(--muted); }
 
+/* “开始扫描”和右边的“自动确认”开关（设计文档第 6.3 节）。 */
+.start-row { display: flex; gap: 10px; align-items: stretch; }
+.start-row .btn.big { flex: 1; width: auto; min-width: 0; }
+.auto-confirm { display: flex; align-items: center; gap: 6px; white-space: nowrap; cursor: pointer; }
+.auto-confirm input { width: 16px; height: 16px; margin: 0; accent-color: var(--warn); cursor: inherit; }
+.auto-confirm:has(input:disabled) { cursor: not-allowed; opacity: 0.6; }
+.auto-warning { font-size: 13px; color: var(--warn); margin-top: -4px; }
 /* 列宽固定为容器宽度，否则窗口标题很长时，下拉列表会把整列撑出窗口。 */
 .scan { border-top: 1px solid var(--line); padding-top: 16px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
 .segmented {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   border: 1px solid var(--line);
   border-radius: 6px;
   overflow: hidden;
@@ -237,7 +244,7 @@ button, select, input { font: inherit; color: inherit; }
 .segmented button[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
 .segmented button:disabled { cursor: not-allowed; opacity: 0.6; }
 .target-pick { display: flex; gap: 8px; }
-.target-pick select {
+.target-pick select, .target-pick input {
   flex: 1;
   min-width: 0;
   border: 1px solid var(--line);

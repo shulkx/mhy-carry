@@ -15,6 +15,7 @@
     "allow-list-targets",
     "allow-scan-start",
     "allow-scan-stop",
-    "allow-update-settings"
+    "allow-update-settings",
+    "allow-set-auto-confirm"
   ]
 }
