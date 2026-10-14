@@ -10,8 +10,8 @@ use std::time::{Duration, Instant};
 
 use mhy_carry_api::{ApiClient, ApiError, Credentials};
 use mhy_carry_core::account::{GameRole, SecretString};
-use mhy_carry_core::capture::FrameSource;
-use mhy_carry_core::confirm::AlwaysAsk;
+use mhy_carry_core::capture::{FrameSource, SourceKind};
+use mhy_carry_core::confirm::{AlwaysAsk, AlwaysAutoConfirm, ConfirmPolicy};
 use mhy_carry_core::decode::QrDecoder;
 use mhy_carry_core::qr::LoginQr;
 use mhy_carry_core::scan::{
@@ -27,6 +27,8 @@ const SEARCH_INTERVAL: Duration = Duration::from_secs(2);
 const TICK: Duration = Duration::from_secs(1);
 /// 查原神角色最多等这么久（含重试）。它只是锦上添花，不能拖慢开始扫描（设计文档第 6.4 节）。
 const ROLE_LOOKUP_LIMIT: Duration = Duration::from_secs(5);
+/// 自动确认开着时，隔这么久预热一次连接（设计文档第 6.5 节）。
+const WARM_UP_EVERY: Duration = Duration::from_secs(45);
 
 /// 怎么提问、怎么显示状态。命令行打印到终端；图形界面弹系统确认框、推送状态快照。
 pub trait ScanUi: Sync {
@@ -51,6 +53,10 @@ pub trait LoginApi: Sync {
         qr: &LoginQr,
         credentials: &Credentials<'_>,
     ) -> impl Future<Output = Result<(), Failure>> + Send;
+    /// 预热连接，省掉登录时的 TLS 握手。默认什么也不做。
+    fn warm_up(&self) -> impl Future<Output = ()> + Send {
+        async {}
+    }
 }
 
 impl LoginApi for ApiClient {
@@ -84,6 +90,10 @@ impl LoginApi for ApiClient {
             .await
             .map_err(Failure::from)
     }
+
+    async fn warm_up(&self) {
+        ApiClient::warm_up(self).await;
+    }
 }
 
 /// 一次扫描要用到的东西。
@@ -96,6 +106,8 @@ pub struct ScanJob {
     pub mid: String,
     pub stoken: SecretString,
     pub idle_timeout: Duration,
+    /// 自动确认：识别到合法的登录码直接登录，不问你（设计文档第 6.5 节）。
+    pub auto_confirm: bool,
 }
 
 /// 跑一次扫码会话，直到它结束，返回结束时的状态快照。
@@ -114,6 +126,7 @@ pub async fn run_scan(
         mid,
         stoken,
         idle_timeout,
+        auto_confirm,
     } = job;
     let credentials = Credentials {
         stoken: &stoken,
@@ -123,7 +136,7 @@ pub async fn run_scan(
         source.describe(),
         account,
         idle_timeout,
-        Box::new(AlwaysAsk),
+        policy(auto_confirm),
         Now::current(),
     );
     ui.show(session.status());
@@ -132,6 +145,7 @@ pub async fn run_scan(
     let busy = Arc::new(AtomicBool::new(false));
     let mut frames = spawn_capture(source, decoder, Arc::clone(&busy));
     let mut actions = VecDeque::from([first]);
+    let mut warm = std::pin::pin!(keep_warm(api, auto_confirm));
     loop {
         if !actions.is_empty() {
             busy.store(true, Ordering::Relaxed);
@@ -164,9 +178,31 @@ pub async fn run_scan(
                 Ok(None) => Event::Observed(Observation::CaptureFailed("截图线程意外退出".to_owned())),
                 Err(_) => Event::Tick,
             },
+            // 预热永远不会结束，这一支不会被选中。
+            () = &mut warm => Event::Tick,
         };
         actions.extend(session.handle(event, Now::current()));
         ui.show(session.status());
+    }
+}
+
+fn policy(auto_confirm: bool) -> Box<dyn ConfirmPolicy + Send> {
+    if auto_confirm {
+        Box::new(AlwaysAutoConfirm)
+    } else {
+        Box::new(AlwaysAsk)
+    }
+}
+
+/// 自动确认开着时，每隔一段时间预热一次连接；关着时什么也不做。永远不会结束。
+async fn keep_warm(api: &impl LoginApi, enabled: bool) {
+    if !enabled {
+        return std::future::pending().await;
+    }
+    let mut interval = tokio::time::interval(WARM_UP_EVERY);
+    loop {
+        interval.tick().await;
+        api.warm_up().await;
     }
 }
 
@@ -178,6 +214,8 @@ fn spawn_capture(
     busy: Arc<AtomicBool>,
 ) -> mpsc::Receiver<Observation> {
     let (sender, receiver) = mpsc::channel(1);
+    // 直播画面来源自己会等新画面（最多 1 秒），识别完马上取下一帧，不按每秒 4 帧限速（第 6.5 节）。
+    let live = source.describe().kind == SourceKind::LiveStream;
     std::thread::spawn(move || {
         while !sender.is_closed() {
             if busy.load(Ordering::Relaxed) {
@@ -186,7 +224,9 @@ fn spawn_capture(
             }
             let started = Instant::now();
             let observation = observe(source.as_mut(), decoder.as_ref());
-            let interval = if observation == Observation::TargetMissing {
+            let interval = if live {
+                Duration::ZERO
+            } else if observation == Observation::TargetMissing {
                 SEARCH_INTERVAL
             } else {
                 FRAME_INTERVAL
@@ -241,6 +281,7 @@ mod tests {
     struct FakeApi {
         check: Result<Option<GameRole>, Failure>,
         logins: AtomicU32,
+        warm_ups: AtomicU32,
     }
 
     impl FakeApi {
@@ -248,6 +289,7 @@ mod tests {
             Self {
                 check,
                 logins: AtomicU32::new(0),
+                warm_ups: AtomicU32::new(0),
             }
         }
     }
@@ -268,6 +310,10 @@ mod tests {
         ) -> Result<(), Failure> {
             self.logins.fetch_add(1, Ordering::SeqCst);
             Ok(())
+        }
+
+        async fn warm_up(&self) {
+            self.warm_ups.fetch_add(1, Ordering::SeqCst);
         }
     }
 
@@ -319,7 +365,42 @@ mod tests {
             mid: "mid_abc".to_owned(),
             stoken: SecretString::from("v2_secret_stoken"),
             idle_timeout: Duration::from_secs(300),
+            auto_confirm: false,
         }
+    }
+
+    #[tokio::test]
+    async fn auto_confirm_logs_in_without_asking() {
+        let api = FakeApi::new(Ok(None));
+        let ui = FakeUi::new(false, None);
+        let (_stop, stop_signal) = mpsc::channel(1);
+        let job = ScanJob {
+            auto_confirm: true,
+            ..job()
+        };
+        let end = run_scan(&api, job, &ui, stop_signal).await;
+        assert!(
+            matches!(
+                &end,
+                ScanStatus::Idle {
+                    last: Some(StopReason::LoggedIn { .. })
+                }
+            ),
+            "{end:?}"
+        );
+        assert_eq!(ui.asked.load(Ordering::SeqCst), 0);
+        assert_eq!(api.logins.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn warms_up_only_when_auto_confirm_is_on() {
+        let api = FakeApi::new(Ok(None));
+        let wait = Duration::from_millis(50);
+        let _ = tokio::time::timeout(wait, keep_warm(&api, false)).await;
+        assert_eq!(api.warm_ups.load(Ordering::SeqCst), 0);
+        // 开着时马上预热一次，之后每 45 秒一次。
+        let _ = tokio::time::timeout(wait, keep_warm(&api, true)).await;
+        assert_eq!(api.warm_ups.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test]

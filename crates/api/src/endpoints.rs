@@ -36,6 +36,11 @@ impl Endpoints {
         at(&self.panda, &format!("/{biz_key}/combo/panda/qrcode/scan"))
     }
 
+    /// panda 域名下的地址。预热连接时用根路径。
+    pub fn panda(&self, path: &str) -> Url {
+        at(&self.panda, path)
+    }
+
     pub fn passport(&self, path: &str) -> Url {
         at(&self.passport, path)
     }

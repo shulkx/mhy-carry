@@ -57,6 +57,7 @@ pub async fn run(target: Option<TargetKind>, account: Option<String>) -> CliResu
         mid: account.mid,
         stoken: account.stoken,
         idle_timeout: ctx.settings.scan.idle_timeout(),
+        auto_confirm: false,
     };
     // 命令行没有“停止”按钮，Ctrl+C 直接结束程序。
     let (_stop, stop_signal) = mpsc::channel(1);

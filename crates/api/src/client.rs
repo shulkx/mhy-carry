@@ -61,6 +61,16 @@ impl ApiClient {
         })
     }
 
+    /// 预热连接（设计文档第 6.5 节）：向两个米哈游域名各发一个不带凭证的 HEAD 请求，
+    /// 让连接留在连接池里，扫码登录时省掉 TLS 握手。结果不重要，出错也不管。
+    pub async fn warm_up(&self) {
+        for url in [self.endpoints.panda("/"), self.endpoints.passport("/")] {
+            if self.policy.check(&url).is_ok() {
+                let _ = self.http.head(url).send().await;
+            }
+        }
+    }
+
     pub(crate) fn device_header(&self) -> Result<HeaderValue, ApiError> {
         HeaderValue::from_str(&self.device_id)
             .map_err(|_| ApiError::Format("设备 ID 里有非法字符".to_owned()))

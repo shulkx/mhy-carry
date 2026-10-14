@@ -311,6 +311,7 @@ fn prepare_job(
         mid: account.mid,
         stoken: account.stoken,
         idle_timeout,
+        auto_confirm: false,
     };
     Ok((job, account_id))
 }
