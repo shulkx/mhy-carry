@@ -8,6 +8,7 @@ mod envelope;
 pub mod error;
 mod guard;
 mod login;
+mod roles;
 
 pub use bind::{BindQr, BindStatus, BoundAccount};
 pub use client::ApiClient;

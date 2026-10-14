@@ -236,6 +236,7 @@ fn prepare_job(
     Ok(ScanJob {
         source,
         decoder: Box::new(RxingDecoder),
+        account: account.describe(),
         uid: account.uid,
         mid: account.mid,
         stoken: account.stoken,

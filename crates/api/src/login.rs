@@ -38,6 +38,12 @@ struct PandaScanData {
     passport_qr_url: String,
 }
 
+#[derive(Deserialize)]
+struct CookieTokenData {
+    #[serde(default)]
+    cookie_token: Option<SecretString>,
+}
+
 /// 扫码登录失败。
 #[derive(Debug, thiserror::Error)]
 pub enum LoginError {
@@ -91,12 +97,19 @@ impl ApiClient {
         Ok(headers)
     }
 
-    /// 检查 stoken 是否仍然有效。
-    pub async fn check_stoken(&self, credentials: &Credentials<'_>) -> Result<(), ApiError> {
+    /// 检查 stoken 是否仍然有效（设计文档第 6.2 节），顺便取回 cookie_token：查原神角色要用它
+    /// （第 6.4 节）。cookie_token 也是凭证，只在内存里用。返回内容里没有它时返回 None，
+    /// 只当作检查通过。
+    pub async fn check_stoken(
+        &self,
+        credentials: &Credentials<'_>,
+    ) -> Result<Option<SecretString>, ApiError> {
         let url = self.endpoints.passport(CHECK_STOKEN_PATH);
-        self.get_json::<IgnoredAny>(url, self.bbs_headers(Some(credentials))?)
+        let data: Option<CookieTokenData> = self
+            .get_json(url, self.bbs_headers(Some(credentials))?)
             .await?
-            .ensure_ok()
+            .into_optional_data()?;
+        Ok(data.and_then(|data| data.cookie_token))
     }
 
     /// 第 1 步：用游戏二维码的 ticket 调 panda 扫码，换来 passport 二维码的票据。
@@ -336,7 +349,8 @@ mod tests {
             stoken: &good,
             mid: "mid_abc",
         };
-        assert!(client.check_stoken(&good).await.is_ok());
+        let token = client.check_stoken(&good).await.unwrap();
+        assert_eq!(token.unwrap().expose_secret(), "x");
 
         let bad = SecretString::from("bad");
         let bad = Credentials {
@@ -345,6 +359,23 @@ mod tests {
         };
         let error = client.check_stoken(&bad).await.unwrap_err();
         assert_eq!(error.retcode(), Some(crate::retcode::TOKEN_INVALID));
+    }
+
+    #[tokio::test]
+    async fn check_stoken_without_cookie_token_still_passes() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path(CHECK_STOKEN_PATH))
+            .respond_with(ok(json!({"uid": "300012345"})))
+            .mount(&server)
+            .await;
+        let client = ApiClient::for_tests(&server.uri());
+        let stoken = SecretString::from("good");
+        let credentials = Credentials {
+            stoken: &stoken,
+            mid: "mid_abc",
+        };
+        assert!(client.check_stoken(&credentials).await.unwrap().is_none());
     }
 
     #[tokio::test]

@@ -25,6 +25,12 @@ impl<T> Envelope<T> {
         self.check()
     }
 
+    /// retcode 为 0 时取出 data；data 缺失时返回 None。
+    pub fn into_optional_data(self) -> Result<Option<T>, ApiError> {
+        self.check()?;
+        Ok(self.data)
+    }
+
     fn check(&self) -> Result<(), ApiError> {
         if self.retcode == 0 {
             Ok(())
@@ -60,6 +66,20 @@ mod tests {
             .into_data()
             .unwrap_err();
         assert!(matches!(error, ApiError::Format(_)));
+    }
+
+    #[test]
+    fn optional_data_may_be_missing() {
+        assert!(
+            parse(r#"{"retcode":0,"message":"OK"}"#)
+                .into_optional_data()
+                .unwrap()
+                .is_none()
+        );
+        let error = parse(r#"{"retcode":-100,"message":"登录失效"}"#)
+            .into_optional_data()
+            .unwrap_err();
+        assert_eq!(error.retcode(), Some(-100));
     }
 
     #[test]

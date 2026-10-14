@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use mhy_carry_api::{ApiClient, ApiError, Credentials};
-use mhy_carry_core::account::SecretString;
+use mhy_carry_core::account::{GameRole, SecretString};
 use mhy_carry_core::capture::FrameSource;
 use mhy_carry_core::confirm::AlwaysAsk;
 use mhy_carry_core::decode::QrDecoder;
@@ -32,14 +32,18 @@ pub trait ScanUi: Sync {
     fn show(&self, status: &ScanStatus);
     /// 问你要不要登录，返回 true 表示登录。
     fn ask(&self, prompt: Prompt) -> impl Future<Output = bool> + Send;
+    /// 检查凭证时顺便查到了原神角色（设计文档第 6.4 节）。默认什么也不做。
+    fn role_found(&self, _role: &GameRole) {}
 }
 
 /// 检查凭证和扫码登录（设计文档第 5 节的 `LoginApi`）。正式实现是 [`ApiClient`]。
 pub trait LoginApi: Sync {
+    /// 检查凭证，顺便查原神角色。凭证有问题时返回 Err；查角色失败不算错误，返回 Ok(None)。
     fn check_credential(
         &self,
+        uid: &str,
         credentials: &Credentials<'_>,
-    ) -> impl Future<Output = Result<(), Failure>> + Send;
+    ) -> impl Future<Output = Result<Option<GameRole>, Failure>> + Send;
     fn login(
         &self,
         qr: &LoginQr,
@@ -48,14 +52,26 @@ pub trait LoginApi: Sync {
 }
 
 impl LoginApi for ApiClient {
-    async fn check_credential(&self, credentials: &Credentials<'_>) -> Result<(), Failure> {
+    async fn check_credential(
+        &self,
+        uid: &str,
+        credentials: &Credentials<'_>,
+    ) -> Result<Option<GameRole>, Failure> {
         // 检查凭证没有副作用，网络出错时重试一次（设计文档第 10 节）。
-        match self.check_stoken(credentials).await {
-            Err(ApiError::Network(_)) => {
-                self.check_stoken(credentials).await.map_err(Failure::from)
-            }
-            result => result.map_err(Failure::from),
+        let token = match self.check_stoken(credentials).await {
+            Err(ApiError::Network(_)) => self.check_stoken(credentials).await,
+            result => result,
         }
+        .map_err(Failure::from)?;
+        let Some(token) = token else {
+            return Ok(None);
+        };
+        // 查角色也只是查询，网络出错重试一次；再失败也不影响扫码（第 6.4 节）。
+        let role = match self.genshin_role(uid, &token).await {
+            Err(ApiError::Network(_)) => self.genshin_role(uid, &token).await,
+            result => result,
+        };
+        Ok(role.ok().flatten())
     }
 
     async fn login(&self, qr: &LoginQr, credentials: &Credentials<'_>) -> Result<(), Failure> {
@@ -69,6 +85,8 @@ impl LoginApi for ApiClient {
 pub struct ScanJob {
     pub source: Box<dyn FrameSource + Send>,
     pub decoder: Box<dyn QrDecoder + Send>,
+    /// 确认框里怎么称呼这个账号，见 `Account::describe`。
+    pub account: String,
     pub uid: String,
     pub mid: String,
     pub stoken: SecretString,
@@ -86,6 +104,7 @@ pub async fn run_scan(
     let ScanJob {
         source,
         decoder,
+        account,
         uid,
         mid,
         stoken,
@@ -97,7 +116,7 @@ pub async fn run_scan(
     };
     let (mut session, first) = ScanSession::start(
         source.describe(),
-        uid,
+        account,
         idle_timeout,
         Box::new(AlwaysAsk),
         Now::current(),
@@ -114,7 +133,11 @@ pub async fn run_scan(
             while let Some(action) = actions.pop_front() {
                 let event = match action {
                     Action::CheckCredential => {
-                        Event::CredentialChecked(api.check_credential(&credentials).await)
+                        let result = api.check_credential(&uid, &credentials).await;
+                        if let Ok(Some(role)) = &result {
+                            ui.role_found(role);
+                        }
+                        Event::CredentialChecked(result.map(|_| ()))
                     }
                     Action::Ask(prompt) => Event::Answered(ui.ask(prompt).await),
                     Action::Login(qr) => Event::LoginFinished(api.login(&qr, &credentials).await),
@@ -211,12 +234,12 @@ mod tests {
     }
 
     struct FakeApi {
-        check: Result<(), Failure>,
+        check: Result<Option<GameRole>, Failure>,
         logins: AtomicU32,
     }
 
     impl FakeApi {
-        fn new(check: Result<(), Failure>) -> Self {
+        fn new(check: Result<Option<GameRole>, Failure>) -> Self {
             Self {
                 check,
                 logins: AtomicU32::new(0),
@@ -225,7 +248,11 @@ mod tests {
     }
 
     impl LoginApi for FakeApi {
-        async fn check_credential(&self, _credentials: &Credentials<'_>) -> Result<(), Failure> {
+        async fn check_credential(
+            &self,
+            _uid: &str,
+            _credentials: &Credentials<'_>,
+        ) -> Result<Option<GameRole>, Failure> {
             self.check.clone()
         }
 
@@ -244,6 +271,7 @@ mod tests {
         answer: bool,
         asked: AtomicU32,
         statuses: Mutex<Vec<ScanStatus>>,
+        roles: Mutex<Vec<GameRole>>,
         stop_when_asked: Option<mpsc::Sender<()>>,
     }
 
@@ -253,6 +281,7 @@ mod tests {
                 answer,
                 asked: AtomicU32::new(0),
                 statuses: Mutex::new(Vec::new()),
+                roles: Mutex::new(Vec::new()),
                 stop_when_asked,
             }
         }
@@ -270,12 +299,17 @@ mod tests {
             }
             self.answer
         }
+
+        fn role_found(&self, role: &GameRole) {
+            self.roles.lock().unwrap().push(role.clone());
+        }
     }
 
     fn job() -> ScanJob {
         ScanJob {
             source: Box::new(FakeSource),
             decoder: Box::new(FakeDecoder),
+            account: "账号「大号」（原神 UID 100000001，通行证 300012345）".to_owned(),
             uid: "300012345".to_owned(),
             mid: "mid_abc".to_owned(),
             stoken: SecretString::from("v2_secret_stoken"),
@@ -285,7 +319,7 @@ mod tests {
 
     #[tokio::test]
     async fn logs_in_after_you_say_yes() {
-        let api = FakeApi::new(Ok(()));
+        let api = FakeApi::new(Ok(None));
         let ui = FakeUi::new(true, None);
         let (_stop, stop_signal) = mpsc::channel(1);
         let end = run_scan(&api, job(), &ui, stop_signal).await;
@@ -304,7 +338,7 @@ mod tests {
 
     #[tokio::test]
     async fn declined_codes_are_not_logged_in_and_stop_ends_the_session() {
-        let api = FakeApi::new(Ok(()));
+        let api = FakeApi::new(Ok(None));
         let (stop, stop_signal) = mpsc::channel(1);
         let ui = FakeUi::new(false, Some(stop));
         let end = run_scan(&api, job(), &ui, stop_signal).await;
@@ -330,5 +364,19 @@ mod tests {
             }
         );
         assert_eq!(ui.asked.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn reports_the_role_found_while_checking() {
+        let role = GameRole {
+            nickname: "旅行者".to_owned(),
+            level: 60,
+            game_uid: "100000001".to_owned(),
+        };
+        let api = FakeApi::new(Ok(Some(role.clone())));
+        let ui = FakeUi::new(true, None);
+        let (_stop, stop_signal) = mpsc::channel(1);
+        run_scan(&api, job(), &ui, stop_signal).await;
+        assert_eq!(*ui.roles.lock().unwrap(), vec![role]);
     }
 }
