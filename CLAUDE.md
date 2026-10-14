@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 MhyCarry：识别屏幕上的米哈游游戏登录二维码，用用户绑定的账号确认登录（常见用法：请主播或朋友帮打难关）。Rust workspace + 以后的 Tauri 2 应用，v1 只做 Windows、原神国服官服、一个账号。用户用中文交流。
 
 - 设计：[docs/design/2026-10-11-mhy-carry-design.md](docs/design/2026-10-11-mhy-carry-design.md)，已经和用户逐节确认过。改动设计前先问用户。
-- 进度：M0–M5 全部完成，v0.2.0（多账号）已发布（计划见 [docs/plans/](docs/plans/)，实测结论在设计文档第 14 节）。下一个子项目是直播流抢码（v0.3），要先单独设计。以后发新版本：改 `tauri.conf.json` 和 `Cargo.toml` 里的版本号，推送 `v*` tag，由 `release.yml` 构建发布；发布前先问用户。
+- 进度：M0–M5 全部完成，v0.2.0（多账号）已发布（计划见 [docs/plans/](docs/plans/)，实测结论在设计文档第 14 节）。M6（v0.3 直播间抢码，设计文档第 6.5 节，计划 [docs/plans/2026-10-15-v0.3-live-plan.md](docs/plans/2026-10-15-v0.3-live-plan.md)）的代码已写完，等审查和用户实测。以后发新版本：改 `tauri.conf.json` 和 `Cargo.toml` 里的版本号，推送 `v*` tag，由 `release.yml` 构建发布；发布前先问用户。
 - 数据目录是 `%LOCALAPPDATA%\io.github.shulkx.mhycarry\`（Tauri 应用标识，设计文档第 8 节）；安装包只为当前用户安装，程序装在 `%LOCALAPPDATA%\MhyCarry\`。
 
 ## 执行计划
@@ -29,7 +29,8 @@ cargo deny check                                 # 许可证、漏洞库、依�
 $env:MHY_CARRY_DATA_DIR = "$env:TEMP\mhy-carry-dev"   # 调试时避开真实账号文件
 cargo run -p mhy-carry-cli -- account [--refresh | --use <通行证ID> | --note <通行证ID> <备注> | --remove <通行证ID>]
 cargo run -p mhy-carry-cli -- bind | login <URL> | login --image <截图>
-cargo run --release -p mhy-carry-cli -- watch [--target auto|window|monitor] [--account <通行证ID>]
+cargo run --release -p mhy-carry-cli -- watch [--target auto|window|monitor|live] [--room <直播间>] [--auto-confirm] [--account <通行证ID>]
+$env:MHY_CARRY_LIVE_ROOM = "<在播的房间号>"; cargo test --release -p mhy-carry-live -- --ignored --nocapture   # 联网拉一个公开直播间
 cargo run -p mhy-carry                           # 图形界面（调试版，右键“检查”可打开开发者工具）
 Push-Location app; cargo tauri build --bundles nsis --ci; Pop-Location   # 安装包，需要 tauri-cli 2.12.0
 ```
