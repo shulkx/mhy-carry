@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 MhyCarry：识别屏幕上的米哈游游戏登录二维码，用用户绑定的账号确认登录（常见用法：请主播或朋友帮打难关）。Rust workspace + 以后的 Tauri 2 应用，v1 只做 Windows、原神国服官服、一个账号。用户用中文交流。
 
 - 设计：[docs/design/2026-10-11-mhy-carry-design.md](docs/design/2026-10-11-mhy-carry-design.md)，已经和用户逐节确认过。改动设计前先问用户。
-- 进度：M0、M1、M2 已完成（计划见 [docs/plans/](docs/plans/)，实测结论在设计文档第 14 节）。M3（Tauri 应用）已完成。M4（发布 v0.1.0）按 [docs/plans/2026-10-14-m4-plan.md](docs/plans/2026-10-14-m4-plan.md) 进行中。
+- 进度：M0–M4 全部完成，v0.1.0 已发布（计划见 [docs/plans/](docs/plans/)，实测结论在设计文档第 14 节）。以后发新版本：改 `tauri.conf.json` 和 `Cargo.toml` 里的版本号，推送 `v*` tag，由 `release.yml` 构建发布；发布前先问用户。
 - 数据目录是 `%LOCALAPPDATA%\io.github.shulkx.mhycarry\`（Tauri 应用标识，设计文档第 8 节）；安装包只为当前用户安装，程序装在 `%LOCALAPPDATA%\MhyCarry\`。
 
 ## 执行计划
