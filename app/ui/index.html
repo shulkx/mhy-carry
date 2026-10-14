@@ -9,9 +9,13 @@
 </head>
 <body>
 <main class="content">
-  <section aria-labelledby="account-label">
-    <h2 class="section-label" id="account-label">账号</h2>
-    <div id="account"></div>
+  <section class="account" aria-labelledby="account-label">
+    <div class="account-head">
+      <h2 class="section-label" id="account-label">账号</h2>
+      <button type="button" class="btn small switch-btn" id="switch-account" aria-haspopup="listbox" aria-expanded="false" hidden></button>
+      <button type="button" class="btn small" id="add-account" hidden>+ 添加账号</button>
+    </div>
+    <div class="account-body" id="account"></div>
   </section>
 
   <section class="scan" aria-labelledby="scan-label">

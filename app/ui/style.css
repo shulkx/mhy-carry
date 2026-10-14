@@ -12,6 +12,8 @@
   --warn: #a8701a;
   --bad: #b8392c;
   --idle: #8793a1;
+  --bad-soft: #f8e6e3;
+  --menu-shadow: 0 10px 26px rgba(24, 38, 56, 0.2);
   --font-ui: "Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", system-ui, sans-serif;
   --font-mono: "Cascadia Mono", Consolas, monospace;
   color-scheme: light;
@@ -31,6 +33,8 @@
     --warn: #dcae52;
     --bad: #ee7b6d;
     --idle: #7c8997;
+    --bad-soft: #3a2422;
+    --menu-shadow: 0 10px 26px rgba(0, 0, 0, 0.55);
   }
 }
 
@@ -66,13 +70,7 @@ button, select, input { font: inherit; color: inherit; }
   margin: 0 0 8px;
 }
 
-.account-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
-.uid { font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; letter-spacing: 0.02em; }
 .meta { color: var(--muted); font-size: 13px; }
-.badge { font-size: 12px; padding: 1px 8px; border-radius: 999px; border: 1px solid currentColor; }
-.badge.unchecked { color: var(--idle); }
-.badge.valid { color: var(--ok); }
-.badge.invalid { color: var(--bad); }
 .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
 .btn {
   border: 1px solid var(--line);
@@ -85,13 +83,145 @@ button, select, input { font: inherit; color: inherit; }
 .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
 .btn.danger { color: var(--bad); }
 .btn.big { width: 100%; padding: 10px; font-size: 16px; font-weight: 600; }
+.btn.small { padding: 2px 10px; font-size: 13px; }
 .message { font-size: 13px; padding: 8px 10px; background: var(--sunken); border-radius: 6px; margin-top: 8px; }
 .message.bad { color: var(--bad); }
 .message.ok { color: var(--ok); }
 
-.bind { display: grid; grid-template-columns: 132px 1fr; gap: 14px; align-items: center; }
+.bind {
+  display: grid;
+  grid-template-columns: 132px 1fr;
+  gap: 14px;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 12px 14px;
+}
 .bind img { width: 132px; height: 132px; background: #ffffff; border: 1px solid var(--line); }
 .bind .step { font-size: 15px; font-weight: 600; }
+
+/* 账号区：只放一张“使用中”的账号卡片，别的账号收在“切换账号”里（设计文档第 6.3 节）。 */
+.account { position: relative; display: grid; gap: 10px; }
+.account-head { display: flex; align-items: center; gap: 8px; }
+.account-head .section-label { margin: 0 auto 0 0; }
+.account-body { display: grid; gap: 10px; }
+.account-body .message { margin-top: 0; }
+.switch-btn .count { color: var(--muted); font-variant-numeric: tabular-nums; }
+.switch-btn .caret { font-size: 10px; margin-left: 4px; color: var(--muted); }
+
+/* 头像：名称的首字，没有名称时显示 #。 */
+.avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 17px;
+  font-weight: 600;
+}
+.avatar.small { width: 28px; height: 28px; font-size: 13px; }
+.avatar.invalid { background: var(--bad-soft); color: var(--bad); }
+.level {
+  font-size: 12px;
+  line-height: 18px;
+  padding: 0 6px;
+  border-radius: 4px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.cred { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; white-space: nowrap; }
+.cred::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+.cred.unchecked { color: var(--idle); }
+.cred.valid { color: var(--ok); }
+.cred.invalid { color: var(--bad); }
+
+/* 卡片：左边头像竖跨整张卡片；中间是名称和等级、原神昵称；右上角是凭证状态和“⋯”；
+   最下面的 ID 小标签一直排到卡片右边。 */
+.card {
+  position: relative;
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr) auto;
+  grid-template-areas: "avatar main side" "avatar chips chips";
+  gap: 0 12px;
+  align-items: start;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 12px 6px 12px 14px;
+}
+.card.invalid { border-color: var(--bad); }
+.card .avatar { grid-area: avatar; margin-top: 2px; }
+.card-main { grid-area: main; display: grid; gap: 2px; min-width: 0; }
+.card-side { grid-area: side; display: flex; align-items: center; gap: 4px; }
+.card-title { display: flex; align-items: center; gap: 8px; min-width: 0; min-height: 28px; }
+.card-title .name { font-size: 17px; font-weight: 600; overflow-wrap: anywhere; }
+.card-sub { font-size: 13px; color: var(--muted); }
+.more {
+  width: 32px;
+  height: 28px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+.more:hover:not(:disabled) { background: var(--sunken); }
+.more:disabled { cursor: not-allowed; opacity: 0.45; }
+.chips { grid-area: chips; display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.chip { display: inline-flex; border: 1px solid var(--line); border-radius: 999px; overflow: hidden; font-size: 12px; line-height: 20px; }
+.chip .k { padding: 0 8px; background: var(--sunken); color: var(--muted); }
+.chip .v { padding: 0 9px; font-variant-numeric: tabular-nums; letter-spacing: 0.02em; }
+.chip .v.missing { color: var(--idle); letter-spacing: 0; }
+.name-edit { display: grid; gap: 2px; }
+.name-edit input {
+  width: 100%;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  background: var(--page);
+  padding: 3px 8px;
+  font-size: 15px;
+}
+.name-edit .hint { font-size: 12px; color: var(--muted); }
+
+/* 弹出层：卡片的“⋯”菜单和切换账号列表。 */
+.popover {
+  position: absolute;
+  z-index: 5;
+  background: var(--page);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: var(--menu-shadow);
+}
+.menu { right: 6px; top: 40px; display: grid; min-width: 132px; padding: 4px; }
+.menu button { text-align: left; border: 0; background: transparent; padding: 6px 10px; border-radius: 4px; cursor: pointer; }
+.menu button:hover, .menu button:focus-visible { background: var(--sunken); }
+.menu .danger { color: var(--bad); }
+.switcher { left: 0; right: 0; top: 34px; padding: 4px; }
+.switcher-list { max-height: 260px; overflow-y: auto; display: grid; gap: 2px; }
+.switch-row {
+  display: grid;
+  grid-template-columns: 16px 28px minmax(0, 1fr) auto;
+  gap: 0 10px;
+  align-items: center;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  border-radius: 6px;
+  padding: 6px 10px 6px 8px;
+  cursor: pointer;
+}
+.switch-row:hover, .switch-row:focus-visible { background: var(--sunken); }
+.switch-row[aria-selected="true"] { background: var(--accent-soft); }
+.switch-row .check { color: var(--accent); font-weight: 700; }
+.switch-row .row-title { display: flex; align-items: center; gap: 6px; min-width: 0; font-weight: 600; }
+.switch-row .row-title span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.switch-row .row-id { grid-column: 3; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.switcher-foot { border-top: 1px solid var(--line); margin-top: 4px; padding: 6px 6px 2px; font-size: 12px; color: var(--muted); }
 
 /* 列宽固定为容器宽度，否则窗口标题很长时，下拉列表会把整列撑出窗口。 */
 .scan { border-top: 1px solid var(--line); padding-top: 16px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }

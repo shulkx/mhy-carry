@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-delete-leftovers"
+description = "Enables the delete_leftovers command without any pre-configured scope."
+commands.allow = ["delete_leftovers"]
+
+[[permission]]
+identifier = "deny-delete-leftovers"
+description = "Denies the delete_leftovers command without any pre-configured scope."
+commands.deny = ["delete_leftovers"]

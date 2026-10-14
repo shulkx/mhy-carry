@@ -1,10 +1,12 @@
 //! 应用的全部状态，以及把快照推送给界面（设计文档第 6.3 节）。
 
+use std::collections::HashMap;
 use std::error::Error;
 use std::path::PathBuf;
 use std::sync::{Mutex, MutexGuard};
 
 use mhy_carry_api::ApiClient;
+use mhy_carry_core::account::GameRole;
 use mhy_carry_core::scan::ScanStatus;
 use mhy_carry_core::settings::Settings;
 use mhy_carry_core::store::{AccountStore, JsonFileStore};
@@ -13,15 +15,19 @@ use tauri::async_runtime::JoinHandle;
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::mpsc;
 
-use crate::state::{AccountView, AppState, BindView, SettingsView};
+use crate::state::{AccountsView, AppState, BindView, Credential, SettingsView};
 
 /// 推送状态快照的事件名（设计文档第 9 节）。
 pub const STATE_EVENT: &str = "state-changed";
 
 pub struct Model {
-    pub account: AccountView,
+    pub accounts: AccountsView,
+    /// 这次运行里查过的凭证状态，按账号的本地 ID 记。打开程序时不联网，一开始都是未检查。
+    pub credentials: HashMap<String, Credential>,
     pub bind: BindView,
     pub scan: ScanStatus,
+    /// 正在扫描用的账号的本地 ID。凭证状态和查到的原神角色都记到这个账号上。
+    pub scan_account: Option<String>,
     pub settings: Settings,
     pub leftovers: usize,
     /// 正在进行的绑定，取消时中止它。
@@ -41,6 +47,21 @@ impl Model {
     pub fn scanning(&self) -> bool {
         self.scan_stop.is_some()
     }
+
+    /// 账号相关的操作只能在空闲时做：扫描中、绑定中都不行，账号文件读不了时也不行
+    /// （设计文档第 9 节）。
+    pub fn ensure_idle(&self) -> Result<(), String> {
+        if self.scanning() {
+            return Err("扫描中不能修改账号，先停止扫描。".to_owned());
+        }
+        if self.bind.in_progress() {
+            return Err("绑定中不能修改账号。".to_owned());
+        }
+        if let AccountsView::Unavailable { message } = &self.accounts {
+            return Err(message.clone());
+        }
+        Ok(())
+    }
 }
 
 /// 交给 Tauri 管理的共享状态。
@@ -59,9 +80,11 @@ impl Shared {
         let store = JsonFileStore::new(paths::accounts_path()?);
         let api = ApiClient::new(settings.device_id.clone())?;
         let mut model = Model {
-            account: AccountView::None { notice: None },
+            accounts: AccountsView::None { notice: None },
+            credentials: HashMap::new(),
             bind: BindView::Idle,
             scan: ScanStatus::Idle { last: None },
+            scan_account: None,
             settings,
             leftovers: 0,
             bind_task: None,
@@ -71,7 +94,7 @@ impl Shared {
             seq: 0,
             last_sent: None,
         };
-        reload_account(&mut model, &store);
+        reload_accounts(&mut model, &store);
         Ok(Self {
             model: Mutex::new(model),
             store,
@@ -95,7 +118,7 @@ impl Shared {
 fn snapshot_of(model: &Model, store: &JsonFileStore) -> AppState {
     AppState {
         seq: model.seq,
-        account: model.account.clone(),
+        accounts: model.accounts.clone(),
         bind: model.bind.clone(),
         scan: model.scan.clone(),
         scan_text: model.scan.to_string(),
@@ -132,8 +155,25 @@ pub fn update(app: &AppHandle, change: impl FnOnce(&mut Model)) {
     let _ = app.emit(STATE_EVENT, snapshot);
 }
 
-/// 重新读账号文件，刷新账号状态和残留文件数。
-pub fn reload_account(model: &mut Model, store: &JsonFileStore) {
-    model.account = AccountView::from_load(store.load());
+/// 重新读账号文件，刷新账号列表和残留文件数。
+pub fn reload_accounts(model: &mut Model, store: &JsonFileStore) {
+    model.accounts = AccountsView::from_load(
+        store.load(),
+        model.settings.active_account.as_deref(),
+        &model.credentials,
+    );
     model.leftovers = store.leftover_files().map_or(0, |files| files.len());
+}
+
+/// 把查到的原神角色存进账号文件，再刷新账号列表。写不进去也不影响使用，下次查到时再存
+/// （设计文档第 6.4 节）。
+pub fn save_role(model: &mut Model, store: &JsonFileStore, id: &str, role: &GameRole) {
+    if let Ok(mut file) = store.load()
+        && let Some(account) = file.get_mut(id)
+        && account.game_role.as_ref() != Some(role)
+    {
+        account.game_role = Some(role.clone());
+        let _ = store.save(&file);
+    }
+    reload_accounts(model, store);
 }
