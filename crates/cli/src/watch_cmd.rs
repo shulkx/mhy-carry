@@ -1,4 +1,4 @@
-//! watch：自动截图识别登录二维码，发现后问你要不要登录（设计文档第 6.2、6.3 节）。
+//! watch：自动截图或拉直播流识别登录二维码，发现后问你要不要登录（设计文档第 6.2、6.3、6.5 节）。
 
 use std::error::Error;
 use std::io::{self, BufRead, Write};
@@ -8,12 +8,16 @@ use mhy_carry_core::account::GameRole;
 use mhy_carry_core::capture::FrameSource;
 use mhy_carry_core::decode::RxingDecoder;
 use mhy_carry_core::games::GAMES;
+use mhy_carry_core::room::parse_room;
 use mhy_carry_core::scan::{Notice, Prompt, ScanStatus};
 use mhy_carry_core::settings::TargetKind;
 use mhy_carry_core::store::{AccountStore, JsonFileStore};
+use mhy_carry_core::video::H264Decoder;
+use mhy_carry_live::LiveSource;
 use mhy_carry_platform::capture::{
     GameWindowSource, MonitorSource, PickedWindowSource, list_monitors, list_windows,
 };
+use mhy_carry_platform::video::MfH264Decoder;
 use mhy_carry_runner::{ScanJob, ScanUi, run_scan};
 use tokio::sync::mpsc;
 
@@ -29,6 +33,8 @@ pub enum Target {
     Window,
     /// 整个显示器
     Monitor,
+    /// 直播间（配合 --room）
+    Live,
 }
 
 impl From<Target> for TargetKind {
@@ -37,18 +43,28 @@ impl From<Target> for TargetKind {
             Target::Auto => TargetKind::Auto,
             Target::Window => TargetKind::Window,
             Target::Monitor => TargetKind::Monitor,
+            Target::Live => TargetKind::Live,
         }
     }
 }
 
-pub async fn run(target: Option<TargetKind>, account: Option<String>) -> CliResult {
+pub async fn run(
+    target: Option<TargetKind>,
+    account: Option<String>,
+    room: Option<String>,
+    auto_confirm: bool,
+) -> CliResult {
     let ctx = Context::load()?;
     let mut file = ctx.store.load()?;
     let id = ctx.pick_account(&file, account.as_deref())?.id.clone();
     let account = file.remove(&id).expect("刚找到的账号");
     let label = account.describe();
-    let source = choose_source(target.unwrap_or(ctx.settings.scan.default_target))?;
+    let room = room.unwrap_or_else(|| ctx.settings.scan.live_room.clone());
+    let source = choose_source(target.unwrap_or(ctx.settings.scan.default_target), &room)?;
     println!("用{label}扫描，按 Ctrl+C 结束。");
+    if auto_confirm {
+        println!("自动确认已开启：发现原神登录码会直接登录，不再问你。");
+    }
     let job = ScanJob {
         source,
         decoder: Box::new(RxingDecoder),
@@ -57,7 +73,7 @@ pub async fn run(target: Option<TargetKind>, account: Option<String>) -> CliResu
         mid: account.mid,
         stoken: account.stoken,
         idle_timeout: ctx.settings.scan.idle_timeout(),
-        auto_confirm: false,
+        auto_confirm,
     };
     // 命令行没有“停止”按钮，Ctrl+C 直接结束程序。
     let (_stop, stop_signal) = mpsc::channel(1);
@@ -109,10 +125,16 @@ impl ScanUi for TerminalUi<'_> {
 }
 
 /// 按目标建好画面来源。选窗口、选显示器时在终端里列出来让你选。
-fn choose_source(target: TargetKind) -> Result<Box<dyn FrameSource + Send>, Box<dyn Error>> {
+fn choose_source(
+    target: TargetKind,
+    room: &str,
+) -> Result<Box<dyn FrameSource + Send>, Box<dyn Error>> {
     Ok(match target {
         TargetKind::Auto => Box::new(GameWindowSource::new(GAMES)),
-        TargetKind::Live => return Err("直播间还没接上".into()),
+        TargetKind::Live => {
+            let room = parse_room(room)?;
+            Box::new(LiveSource::start(room, Box::new(system_decoder))?)
+        }
         TargetKind::Window => {
             let windows = list_windows()?;
             if windows.is_empty() {
@@ -216,6 +238,11 @@ impl Printer {
 
 fn now_hms() -> String {
     jiff::Zoned::now().strftime("%H:%M:%S").to_string()
+}
+
+/// 在拉流线程里创建系统 H.264 解码器。
+fn system_decoder() -> Result<Box<dyn H264Decoder>, String> {
+    MfH264Decoder::new().map(|decoder| Box::new(decoder) as Box<dyn H264Decoder>)
 }
 
 #[cfg(test)]

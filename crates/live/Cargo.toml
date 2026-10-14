@@ -17,3 +17,7 @@ url.workspace = true
 
 [dev-dependencies]
 wiremock.workspace = true
+
+# 联网测试用系统解码器（只在 Windows 上，默认忽略）。
+[target.'cfg(windows)'.dev-dependencies]
+mhy-carry-platform.workspace = true

@@ -484,4 +484,51 @@ mod tests {
             Err(CaptureError::LiveFailed("直播流不是 H.264".to_owned()))
         );
     }
+
+    /// 联网测试：拉一个正在直播的 B 站直播间（公开直播，不带凭证），用系统解码器解码、
+    /// 用 rxing 识别，模拟扫描循环跑 5 秒。
+    /// 用法：`$env:MHY_CARRY_LIVE_ROOM = "房间号"; cargo test -p mhy-carry-live -- --ignored --nocapture`
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "需要联网，并用 MHY_CARRY_LIVE_ROOM 指定一个正在直播的房间"]
+    fn pulls_a_real_bilibili_room() {
+        use mhy_carry_core::decode::{QrDecoder, RxingDecoder};
+        use mhy_carry_platform::video::MfH264Decoder;
+
+        let id = std::env::var("MHY_CARRY_LIVE_ROOM")
+            .expect("用 MHY_CARRY_LIVE_ROOM 指定房间号")
+            .parse()
+            .expect("房间号是数字");
+        let decoder: DecoderFactory = Box::new(|| {
+            MfH264Decoder::new().map(|decoder| Box::new(decoder) as Box<dyn H264Decoder>)
+        });
+        let started = Instant::now();
+        let mut source = LiveSource::start(LiveRoom::Bilibili { id }, decoder).unwrap();
+        let mut first = None;
+        let mut scanned = 0;
+        let mut size = (0, 0);
+        while started.elapsed() < Duration::from_secs(30) {
+            match source.next_frame() {
+                Ok(frame) => {
+                    let first = *first.get_or_insert(started.elapsed());
+                    size = (frame.width, frame.height);
+                    RxingDecoder.decode(frame);
+                    scanned += 1;
+                    if started.elapsed() > first + Duration::from_secs(5) {
+                        break;
+                    }
+                }
+                Err(CaptureError::Connecting) => {}
+                Err(other) => panic!("{other}"),
+            }
+        }
+        let first = first.expect("30 秒内没解出画面");
+        println!(
+            "第一帧用了 {} 毫秒；之后 5 秒解码并识别了 {scanned} 帧，画面 {}×{}",
+            first.as_millis(),
+            size.0,
+            size.1
+        );
+        assert!(scanned > 10, "{scanned}");
+    }
 }

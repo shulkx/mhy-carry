@@ -41,6 +41,12 @@ enum Command {
         /// 用哪个账号（通行证 ID）；不填时用使用中的账号
         #[arg(long, value_name = "通行证ID")]
         account: Option<String>,
+        /// 直播间网址或房间号（--target live 时用；不填时用上次的）
+        #[arg(long, value_name = "网址或房间号")]
+        room: Option<String>,
+        /// 自动确认：识别到原神登录码直接登录，不再问你
+        #[arg(long)]
+        auto_confirm: bool,
     },
 }
 
@@ -106,7 +112,12 @@ async fn main() -> ExitCode {
             };
             login_cmd::run(source).await
         }
-        Command::Watch { target, account } => watch_cmd::run(target.map(Into::into), account).await,
+        Command::Watch {
+            target,
+            account,
+            room,
+            auto_confirm,
+        } => watch_cmd::run(target.map(Into::into), account, room, auto_confirm).await,
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,
