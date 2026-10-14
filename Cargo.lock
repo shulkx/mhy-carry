@@ -2811,6 +2811,7 @@ version = "0.2.0"
 dependencies = [
  "dirs",
  "mhy-carry-core",
+ "qrcode",
  "thiserror 2.0.21",
  "windows",
  "xcap",
