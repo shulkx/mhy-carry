@@ -207,13 +207,21 @@ impl BindView {
 pub struct SettingsView {
     pub default_target: TargetKind,
     pub idle_timeout_secs: u64,
+    pub auto_confirm: bool,
+    /// 上次的直播间，界面打开时填进输入框。
+    pub live_room: String,
 }
 
-/// 网页端提交的设置，超时不短于 30 秒。
-pub fn validated_settings(default_target: TargetKind, idle_timeout_secs: u64) -> ScanSettings {
+/// 网页端在“设置”里改的两项：默认截图目标、超时（不短于 30 秒）。其他设置不动。
+pub fn apply_settings(
+    scan: &ScanSettings,
+    default_target: TargetKind,
+    idle_timeout_secs: u64,
+) -> ScanSettings {
     ScanSettings {
         default_target,
         idle_timeout_secs: idle_timeout_secs.max(MIN_IDLE_TIMEOUT_SECS),
+        ..scan.clone()
     }
 }
 
@@ -400,13 +408,19 @@ mod tests {
     }
 
     #[test]
-    fn settings_timeout_has_a_floor() {
+    fn settings_keep_the_other_fields() {
+        let scan = ScanSettings {
+            auto_confirm: true,
+            live_room: "12345".to_owned(),
+            ..ScanSettings::default()
+        };
+        let applied = apply_settings(&scan, TargetKind::Monitor, 5);
+        assert_eq!(applied.idle_timeout_secs, 30);
+        assert_eq!(applied.default_target, TargetKind::Monitor);
+        assert!(applied.auto_confirm);
+        assert_eq!(applied.live_room, "12345");
         assert_eq!(
-            validated_settings(TargetKind::Monitor, 5).idle_timeout_secs,
-            30
-        );
-        assert_eq!(
-            validated_settings(TargetKind::Monitor, 600).idle_timeout_secs,
+            apply_settings(&scan, TargetKind::Auto, 600).idle_timeout_secs,
             600
         );
     }

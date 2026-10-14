@@ -31,8 +31,12 @@ pub struct Settings {
 pub struct ScanSettings {
     /// 默认的截图目标。
     pub default_target: TargetKind,
-    /// 连续这么多秒没发现登录二维码就停止扫描。
+    /// 连续这么多秒没发现登录二维码就停止扫描。直播间不超时。
     pub idle_timeout_secs: u64,
+    /// 自动确认，记住上次的选择（设计文档第 6.5 节）。
+    pub auto_confirm: bool,
+    /// 上次的直播间（网址或房间号）。
+    pub live_room: String,
 }
 
 /// 超时最短 30 秒。设置成 0 这类值会让扫描一开始就停止。
@@ -50,6 +54,8 @@ impl Default for ScanSettings {
         Self {
             default_target: TargetKind::Auto,
             idle_timeout_secs: 300,
+            auto_confirm: false,
+            live_room: String::new(),
         }
     }
 }
@@ -65,6 +71,8 @@ pub enum TargetKind {
     Window,
     /// 整个显示器。
     Monitor,
+    /// 直播间（v0.3）。
+    Live,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -195,13 +203,23 @@ mod tests {
         )
         .unwrap();
         let settings = Settings::load_or_init(&path).unwrap();
-        assert_eq!(
-            settings.scan,
-            ScanSettings {
-                default_target: TargetKind::Auto,
-                idle_timeout_secs: 300,
-            }
-        );
+        assert_eq!(settings.scan, ScanSettings::default());
+    }
+
+    #[test]
+    fn reads_live_settings() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        fs::write(
+            &path,
+            r#"{"format":1,"device_id":"0b8f4a1e-1111-4222-8333-944445555666","scan":{"default_target":"live","auto_confirm":true,"live_room":"12345"}}"#,
+        )
+        .unwrap();
+        let settings = Settings::load_or_init(&path).unwrap();
+        assert_eq!(settings.scan.default_target, TargetKind::Live);
+        assert!(settings.scan.auto_confirm);
+        assert_eq!(settings.scan.live_room, "12345");
+        assert_eq!(settings.scan.idle_timeout_secs, 300);
     }
 
     #[test]
@@ -249,8 +267,8 @@ mod tests {
     #[test]
     fn idle_timeout_has_a_floor() {
         let settings = |secs| ScanSettings {
-            default_target: TargetKind::Auto,
             idle_timeout_secs: secs,
+            ..ScanSettings::default()
         };
         assert_eq!(settings(0).idle_timeout(), Duration::from_secs(30));
         assert_eq!(settings(300).idle_timeout(), Duration::from_secs(300));

@@ -18,7 +18,7 @@ use tauri::{AppHandle, Manager, State};
 use tokio::sync::mpsc;
 
 use crate::model::{Model, Shared, reload_accounts, update};
-use crate::state::{AppState, BindView, validated_settings};
+use crate::state::{AppState, BindView, apply_settings};
 use crate::{bind, scan};
 
 type CommandResult<T = ()> = Result<T, String>;
@@ -208,7 +208,7 @@ pub struct TargetView {
 #[tauri::command]
 pub fn list_targets(kind: TargetKind) -> CommandResult<Vec<TargetView>> {
     Ok(match kind {
-        TargetKind::Auto => Vec::new(),
+        TargetKind::Auto | TargetKind::Live => Vec::new(),
         TargetKind::Window => list_windows()
             .map_err(|error| error.to_string())?
             .into_iter()
@@ -284,6 +284,7 @@ fn prepare_job(
     let account = file.remove(&account_id).ok_or(ACCOUNT_GONE)?;
     let source: Box<dyn FrameSource + Send> = match target {
         TargetKind::Auto => Box::new(GameWindowSource::new(GAMES)),
+        TargetKind::Live => return Err("直播间还没接上，下一个任务接。".to_owned()),
         TargetKind::Window => {
             let id = id.ok_or("先选择要扫描的窗口。")?;
             let window = list_windows()
@@ -333,7 +334,7 @@ pub fn update_settings(
     let mut result = Ok(());
     update(&app, |model| {
         let previous = model.settings.scan.clone();
-        model.settings.scan = validated_settings(default_target, idle_timeout_secs);
+        model.settings.scan = apply_settings(&previous, default_target, idle_timeout_secs);
         if let Err(error) = model.settings.save(&shared.settings_path) {
             // 没保存成功就退回原来的设置，免得界面上显示的和重启后的不一样。
             model.settings.scan = previous;

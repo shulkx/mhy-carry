@@ -127,6 +127,8 @@ fn snapshot_of(model: &Model, store: &JsonFileStore) -> AppState {
         settings: SettingsView {
             default_target: model.settings.scan.default_target,
             idle_timeout_secs: model.settings.scan.idle_timeout_secs,
+            auto_confirm: model.settings.scan.auto_confirm,
+            live_room: model.settings.scan.live_room.clone(),
         },
         credential_file: store.path().display().to_string(),
         leftovers: model.leftovers,

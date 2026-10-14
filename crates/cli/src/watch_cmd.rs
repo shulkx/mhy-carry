@@ -112,6 +112,7 @@ impl ScanUi for TerminalUi<'_> {
 fn choose_source(target: TargetKind) -> Result<Box<dyn FrameSource + Send>, Box<dyn Error>> {
     Ok(match target {
         TargetKind::Auto => Box::new(GameWindowSource::new(GAMES)),
+        TargetKind::Live => return Err("直播间还没接上".into()),
         TargetKind::Window => {
             let windows = list_windows()?;
             if windows.is_empty() {
