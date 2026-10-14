@@ -46,7 +46,9 @@ pub async fn run(app: AppHandle) {
             model.bind = BindView::Succeeded { added: saved.added };
         }
     });
-    fetch_role(&app, &saved.id).await;
+    // 单独起一个任务查角色：查询要等网络，不能挡住提示的收起；这时你接着点“添加账号”，
+    // 会中止这个绑定任务，但不会连带中止查角色。
+    tauri::async_runtime::spawn(fetch_role(app.clone(), saved.id.clone()));
     // 成功时账号已经显示出来，提示几秒后收起；过期、取消、失败要你处理，一直显示。
     tokio::time::sleep(SUCCESS_SHOWN_FOR).await;
     update(&app, |model| {
@@ -57,12 +59,12 @@ pub async fn run(app: AppHandle) {
 }
 
 /// 查一次原神角色，查到就存进账号文件。查不到不提示（设计文档第 6.4 节）。
-async fn fetch_role(app: &AppHandle, id: &str) {
+async fn fetch_role(app: AppHandle, id: String) {
     let shared = app.state::<Shared>();
     let Ok(file) = shared.store.load() else {
         return;
     };
-    let Some(account) = file.get(id) else {
+    let Some(account) = file.get(&id) else {
         return;
     };
     let credentials = Credentials {
@@ -74,7 +76,7 @@ async fn fetch_role(app: &AppHandle, id: &str) {
         .check_credential(&account.uid, &credentials)
         .await
     {
-        update(app, |model| save_role(model, &shared.store, id, &role));
+        update(&app, |model| save_role(model, &shared.store, &id, &role));
     }
 }
 
@@ -113,7 +115,12 @@ async fn bind(app: &AppHandle) -> Result<Upserted, BindView> {
             Ok(BindStatus::Confirmed(bound)) => {
                 let account =
                     Account::new(bound.uid, bound.mid, bound.stoken, jiff::Timestamp::now());
-                return save(&shared, account).map_err(|message| BindView::Failed { message });
+                // 在模型锁里保存：改账号文件的命令也都在锁里读写，不会互相覆盖。
+                let saved = {
+                    let _model = shared.lock();
+                    save(&shared, account)
+                };
+                return saved.map_err(|message| BindView::Failed { message });
             }
             Err(ApiError::Network(_)) if network_errors + 1 < MAX_NETWORK_ERRORS_IN_A_ROW => {
                 network_errors += 1;

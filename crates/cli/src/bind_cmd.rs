@@ -81,8 +81,12 @@ async fn save(ctx: &mut Context, bound: BoundAccount) -> CliResult {
                 "原神角色：{} Lv.{}（UID {}）",
                 role.nickname, role.level, role.game_uid
             );
-            file.get_mut(&saved.id).expect("刚保存的账号").game_role = Some(role);
-            ctx.store.save(&file)?;
+            // 联网期间账号文件可能被改过，重读一次，只改这个账号的角色。
+            let mut file = ctx.store.load()?;
+            if let Some(account) = file.get_mut(&saved.id) {
+                account.game_role = Some(role);
+                ctx.store.save(&file)?;
+            }
         }
         Ok(None) => println!("这个通行证在原神官服没有角色。"),
         Err(message) => println!("查原神角色失败（不影响使用）：{message}"),

@@ -85,13 +85,13 @@ fn summary(account: &Account) -> String {
 /// 逐个检查凭证、查原神角色。查角色的错误照实打印（retcode 和 message），方便核对接口
 /// （设计文档第 14 节第 7 项）。
 async fn refresh(ctx: &Context) -> CliResult {
-    let mut file = ctx.store.load()?;
+    let file = ctx.store.load()?;
     if file.accounts.is_empty() {
         println!("还没有绑定账号。");
         return Ok(());
     }
-    let mut changed = false;
-    for account in &mut file.accounts {
+    let mut found = Vec::new();
+    for account in &file.accounts {
         println!("{}（通行证 {}）", account.display_name(), account.uid);
         let credentials = Credentials {
             stoken: &account.stoken,
@@ -122,15 +122,21 @@ async fn refresh(ctx: &Context) -> CliResult {
                     role.nickname, role.level, role.game_uid
                 );
                 if account.game_role.as_ref() != Some(&role) {
-                    account.game_role = Some(role);
-                    changed = true;
+                    found.push((account.id.clone(), role));
                 }
             }
             Ok(None) => println!("  这个通行证在原神官服没有角色"),
             Err(error) => println!("  查原神角色失败：{error}"),
         }
     }
-    if changed {
+    if !found.is_empty() {
+        // 联网期间账号文件可能被改过（比如在应用里加了账号），重读一次，只改角色。
+        let mut file = ctx.store.load()?;
+        for (id, role) in found {
+            if let Some(account) = file.get_mut(&id) {
+                account.game_role = Some(role);
+            }
+        }
         ctx.store.save(&file)?;
     }
     Ok(())
@@ -157,7 +163,7 @@ fn set_note(ctx: &Context, uid: &str, note: &str) -> CliResult {
 }
 
 fn remove(ctx: &mut Context, uid: &str) -> CliResult {
-    let mut file = ctx.store.load()?;
+    let file = ctx.store.load()?;
     let account = ctx.pick_account(&file, Some(uid))?;
     let (id, label) = (account.id.clone(), account.describe());
     if !prompt::confirm(&format!("解绑{label}？会删除本机保存的这个账号的凭证。"))?
@@ -165,7 +171,12 @@ fn remove(ctx: &mut Context, uid: &str) -> CliResult {
         println!("已取消。");
         return Ok(());
     }
-    file.remove(&id);
+    // 等你确认期间账号文件可能被改过，重读一次，只删这一个账号。
+    let mut file = ctx.store.load()?;
+    if file.remove(&id).is_none() {
+        println!("这个账号已经不在了。");
+        return Ok(());
+    }
     ctx.store.save(&file)?;
     if ctx.settings.active_account.as_deref() == Some(id.as_str()) {
         ctx.set_active(None)?;

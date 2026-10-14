@@ -55,7 +55,7 @@ struct AccountArgs {
     #[arg(long = "use", value_name = "通行证ID")]
     use_account: Option<String>,
     /// 给账号写备注；备注写 "" 表示去掉
-    #[arg(long, num_args = 2, value_names = ["通行证ID", "备注"])]
+    #[arg(long, num_args = 2, value_names = ["通行证ID", "备注"], allow_hyphen_values = true)]
     note: Option<Vec<String>>,
     /// 解绑这个账号，删除本机保存的凭证
     #[arg(long, value_name = "通行证ID")]

@@ -22,6 +22,8 @@ let targetList = [];
 let open = null;
 let editing = false;
 let rebindFor = null;
+// 改备注时已经输入的内容。改备注期间可能收到新快照、整块重画，不能把输入冲掉。
+let noteDraft = null;
 
 function el(tag, attrs = {}, text) {
   const node = document.createElement(tag);
@@ -184,14 +186,21 @@ function renderNoteEditor(item) {
     type: "text", id: "note-input", maxlength: String(MAX_NOTE_CHARS),
     "aria-label": "备注", placeholder: "备注，比如“大号”",
   });
-  input.value = item.note;
+  input.value = noteDraft ?? item.note;
+  input.addEventListener("input", () => {
+    noteDraft = input.value;
+  });
   input.addEventListener("keydown", (event) => {
+    // 中文输入法正在拼写时按回车是上屏，不是保存。
+    if (event.isComposing || event.keyCode === 229) return;
     if (event.key === "Enter") {
       editing = false;
+      noteDraft = null;
       call("set_note", { id: item.id, note: input.value });
       renderAccount();
     } else if (event.key === "Escape") {
       editing = false;
+      noteDraft = null;
       renderAccount();
     }
   });
@@ -206,6 +215,7 @@ function renderMenu(item) {
     button("编辑备注", "", () => {
       open = null;
       editing = true;
+      noteDraft = null;
       renderAccount();
     }, { role: "menuitem" }),
     button("重新绑定", "", () => startBind(item.passport_id), { role: "menuitem" }),
@@ -417,7 +427,11 @@ document.addEventListener("keydown", (event) => {
   }
 });
 document.addEventListener("click", (event) => {
-  if (open && !event.target.closest(".popover, #switch-account, .more")) {
+  // 用事件的传播路径判断点在哪：按钮的处理器重画时会把被点的元素换掉，
+  // 那时 event.target 已经不在页面上，closest 找不到它原来的上级。
+  const inside = event.composedPath().some((node) =>
+    node instanceof Element && node.matches(".popover, #switch-account, .more"));
+  if (open && !inside) {
     open = null;
     renderAccount();
   }

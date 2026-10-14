@@ -38,12 +38,6 @@ struct PandaScanData {
     passport_qr_url: String,
 }
 
-#[derive(Deserialize)]
-struct CookieTokenData {
-    #[serde(default)]
-    cookie_token: Option<SecretString>,
-}
-
 /// 扫码登录失败。
 #[derive(Debug, thiserror::Error)]
 pub enum LoginError {
@@ -98,18 +92,24 @@ impl ApiClient {
     }
 
     /// 检查 stoken 是否仍然有效（设计文档第 6.2 节），顺便取回 cookie_token：查原神角色要用它
-    /// （第 6.4 节）。cookie_token 也是凭证，只在内存里用。返回内容里没有它时返回 None，
-    /// 只当作检查通过。
+    /// （第 6.4 节）。cookie_token 也是凭证，只在内存里用。
+    ///
+    /// 只要 retcode 为 0 就算检查通过。data 按任意 JSON 读：cookie_token 缺失或者类型变了，
+    /// 只是查不了角色，不能让凭证检查失败、扫描停下。
     pub async fn check_stoken(
         &self,
         credentials: &Credentials<'_>,
     ) -> Result<Option<SecretString>, ApiError> {
         let url = self.endpoints.passport(CHECK_STOKEN_PATH);
-        let data: Option<CookieTokenData> = self
+        let data: Option<serde_json::Value> = self
             .get_json(url, self.bbs_headers(Some(credentials))?)
             .await?
             .into_optional_data()?;
-        Ok(data.and_then(|data| data.cookie_token))
+        Ok(data
+            .as_ref()
+            .and_then(|data| data.get("cookie_token"))
+            .and_then(serde_json::Value::as_str)
+            .map(SecretString::from))
     }
 
     /// 第 1 步：用游戏二维码的 ticket 调 panda 扫码，换来 passport 二维码的票据。
@@ -362,20 +362,27 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn check_stoken_without_cookie_token_still_passes() {
-        let server = MockServer::start().await;
-        Mock::given(method("GET"))
-            .and(path(CHECK_STOKEN_PATH))
-            .respond_with(ok(json!({"uid": "300012345"})))
-            .mount(&server)
-            .await;
-        let client = ApiClient::for_tests(&server.uri());
-        let stoken = SecretString::from("good");
-        let credentials = Credentials {
-            stoken: &stoken,
-            mid: "mid_abc",
-        };
-        assert!(client.check_stoken(&credentials).await.unwrap().is_none());
+    async fn check_stoken_without_a_usable_cookie_token_still_passes() {
+        for data in [
+            json!({"uid": "300012345"}),
+            json!({"cookie_token": {"v": 2}}),
+            json!("unexpected"),
+        ] {
+            let server = MockServer::start().await;
+            Mock::given(method("GET"))
+                .and(path(CHECK_STOKEN_PATH))
+                .respond_with(ok(data.clone()))
+                .mount(&server)
+                .await;
+            let client = ApiClient::for_tests(&server.uri());
+            let stoken = SecretString::from("good");
+            let credentials = Credentials {
+                stoken: &stoken,
+                mid: "mid_abc",
+            };
+            let token = client.check_stoken(&credentials).await;
+            assert!(matches!(token, Ok(None)), "{data}: {:?}", token.is_ok());
+        }
     }
 
     #[tokio::test]

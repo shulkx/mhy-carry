@@ -4,12 +4,13 @@ use std::error::Error;
 use std::io::{self, BufRead, Write};
 use std::sync::Mutex;
 
+use mhy_carry_core::account::GameRole;
 use mhy_carry_core::capture::FrameSource;
 use mhy_carry_core::decode::RxingDecoder;
 use mhy_carry_core::games::GAMES;
 use mhy_carry_core::scan::{Notice, Prompt, ScanStatus};
 use mhy_carry_core::settings::TargetKind;
-use mhy_carry_core::store::AccountStore;
+use mhy_carry_core::store::{AccountStore, JsonFileStore};
 use mhy_carry_platform::capture::{
     GameWindowSource, MonitorSource, PickedWindowSource, list_monitors, list_windows,
 };
@@ -59,17 +60,24 @@ pub async fn run(target: Option<TargetKind>, account: Option<String>) -> CliResu
     };
     // 命令行没有“停止”按钮，Ctrl+C 直接结束程序。
     let (_stop, stop_signal) = mpsc::channel(1);
-    run_scan(&ctx.api, job, &TerminalUi::default(), stop_signal).await;
+    let ui = TerminalUi {
+        printer: Mutex::default(),
+        store: &ctx.store,
+        account_id: id,
+    };
+    run_scan(&ctx.api, job, &ui, stop_signal).await;
     Ok(())
 }
 
 /// 在终端里显示状态和提问。
-#[derive(Default)]
-struct TerminalUi {
+struct TerminalUi<'a> {
     printer: Mutex<Printer>,
+    /// 查到原神角色时存进账号文件（设计文档第 6.4 节）。
+    store: &'a JsonFileStore,
+    account_id: String,
 }
 
-impl ScanUi for TerminalUi {
+impl ScanUi for TerminalUi<'_> {
     fn show(&self, status: &ScanStatus) {
         self.printer
             .lock()
@@ -85,6 +93,17 @@ impl ScanUi for TerminalUi {
             .ok()
             .and_then(Result::ok)
             .unwrap_or(false)
+    }
+
+    fn role_found(&self, role: &GameRole) {
+        // 写不进去也不影响扫码，下次查到时再存。
+        if let Ok(mut file) = self.store.load()
+            && let Some(account) = file.get_mut(&self.account_id)
+            && account.game_role.as_ref() != Some(role)
+        {
+            account.game_role = Some(role.clone());
+            let _ = self.store.save(&file);
+        }
     }
 }
 

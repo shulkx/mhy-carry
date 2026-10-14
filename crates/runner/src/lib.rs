@@ -25,6 +25,8 @@ const FRAME_INTERVAL: Duration = Duration::from_millis(250);
 const SEARCH_INTERVAL: Duration = Duration::from_secs(2);
 /// 这么久没有新画面时喂一次 Tick，让会话检查超时。
 const TICK: Duration = Duration::from_secs(1);
+/// 查原神角色最多等这么久（含重试）。它只是锦上添花，不能拖慢开始扫描（设计文档第 6.4 节）。
+const ROLE_LOOKUP_LIMIT: Duration = Duration::from_secs(5);
 
 /// 怎么提问、怎么显示状态。命令行打印到终端；图形界面弹系统确认框、推送状态快照。
 pub trait ScanUi: Sync {
@@ -66,12 +68,15 @@ impl LoginApi for ApiClient {
         let Some(token) = token else {
             return Ok(None);
         };
-        // 查角色也只是查询，网络出错重试一次；再失败也不影响扫码（第 6.4 节）。
-        let role = match self.genshin_role(uid, &token).await {
-            Err(ApiError::Network(_)) => self.genshin_role(uid, &token).await,
-            result => result,
+        // 查角色也只是查询，网络出错重试一次；再失败或者超时也不影响扫码（第 6.4 节）。
+        let lookup = async {
+            match self.genshin_role(uid, &token).await {
+                Err(ApiError::Network(_)) => self.genshin_role(uid, &token).await,
+                result => result,
+            }
         };
-        Ok(role.ok().flatten())
+        let role = tokio::time::timeout(ROLE_LOOKUP_LIMIT, lookup).await;
+        Ok(role.ok().and_then(Result::ok).flatten())
     }
 
     async fn login(&self, qr: &LoginQr, credentials: &Credentials<'_>) -> Result<(), Failure> {
