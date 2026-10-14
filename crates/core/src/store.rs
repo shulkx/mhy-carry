@@ -125,8 +125,12 @@ impl AccountStore for JsonFileStore {
             OnDisk::Unparsable => Err(StoreError::Corrupt {
                 backup: self.back_up_corrupt_file()?,
             }),
-            OnDisk::Supported(bytes) => match serde_json::from_slice(&bytes) {
-                Ok(file) => Ok(file),
+            OnDisk::Supported(bytes) => match serde_json::from_slice::<AccountFile>(&bytes) {
+                // 旧格式的文件照常使用，下次写入时升级成本程序的格式（设计文档第 8 节）。
+                Ok(file) => Ok(AccountFile {
+                    format: ACCOUNT_FILE_FORMAT,
+                    ..file
+                }),
                 Err(_) => Err(StoreError::Corrupt {
                     backup: self.back_up_corrupt_file()?,
                 }),
@@ -220,12 +224,12 @@ mod tests {
     fn newer_format_is_read_only() {
         let dir = tempfile::tempdir().unwrap();
         let store = store_in(&dir);
-        let newer = r#"{"format":2,"encryption":"dpapi","accounts":"opaque"}"#;
+        let newer = r#"{"format":3,"encryption":"dpapi","accounts":"opaque"}"#;
         fs::write(store.path(), newer).unwrap();
 
         assert!(matches!(
             store.load(),
-            Err(StoreError::UnsupportedFormat { format: 2, .. })
+            Err(StoreError::UnsupportedFormat { format: 3, .. })
         ));
         assert!(matches!(
             store.save(&AccountFile::empty()),
@@ -252,8 +256,8 @@ mod tests {
     #[test]
     fn newer_format_is_read_only_whatever_the_other_header_fields_look_like() {
         for newer in [
-            r#"{"format":2}"#,
-            r#"{"format":2,"encryption":{"kind":"dpapi"}}"#,
+            r#"{"format":3}"#,
+            r#"{"format":3,"encryption":{"kind":"dpapi"}}"#,
         ] {
             let dir = tempfile::tempdir().unwrap();
             let store = store_in(&dir);
@@ -261,7 +265,7 @@ mod tests {
             assert!(
                 matches!(
                     store.load(),
-                    Err(StoreError::UnsupportedFormat { format: 2, .. })
+                    Err(StoreError::UnsupportedFormat { format: 3, .. })
                 ),
                 "{newer}"
             );
@@ -320,5 +324,29 @@ mod tests {
         let store = store_in(&dir);
         fs::write(store.path(), [0xff, 0xfe, 0x00, 0x7b]).unwrap();
         assert!(matches!(store.load(), Err(StoreError::Corrupt { .. })));
+    }
+
+    #[test]
+    fn format_1_files_are_upgraded_when_saved_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = store_in(&dir);
+        fs::write(
+            store.path(),
+            r#"{"format":1,"encryption":"none","accounts":[{"id":"a1","uid":"300012345","mid":"mid_abc","stoken":"v2_secret_stoken","note":"","bound_at":"2026-10-11T08:00:00Z"}]}"#,
+        )
+        .unwrap();
+
+        let file = store.load().unwrap();
+        assert_eq!(file.accounts[0].uid, "300012345");
+        // 只读不改文件。
+        assert!(
+            fs::read_to_string(store.path())
+                .unwrap()
+                .contains(r#""format":1"#)
+        );
+
+        store.save(&file).unwrap();
+        let text = fs::read_to_string(store.path()).unwrap();
+        assert!(text.contains(r#""format": 2"#), "{text}");
     }
 }
