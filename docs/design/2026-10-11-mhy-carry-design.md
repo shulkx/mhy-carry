@@ -1,7 +1,7 @@
 # MhyCarry 设计文档（v1）
 
 - 日期：2026-10-11
-- 状态：已确认；同日按接口核对结果修订了第 6、9、10、14 节。2026-10-12 M1 已完成，实测结论写入第 3、9、14 节。2026-10-13 新增第 6.3 节“界面状态”，并相应修订第 5、6.2、9、11 节。2026-10-13 M2 已完成，实测结论写入第 14 节。2026-10-13 定下确认框做法和页面布局（第 3、6.2、6.3 节），uid 改为完整显示。2026-10-13 决定 v1 不写日志文件（第 3、8、9、11 节）
+- 状态：已确认；同日按接口核对结果修订了第 6、9、10、14 节。2026-10-12 M1 已完成，实测结论写入第 3、9、14 节。2026-10-13 新增第 6.3 节“界面状态”，并相应修订第 5、6.2、9、11 节。2026-10-13 M2 已完成，实测结论写入第 14 节。2026-10-13 定下确认框做法和页面布局（第 3、6.2、6.3 节），uid 改为完整显示。2026-10-13 决定 v1 不写日志文件（第 3、8、9、11 节）。2026-10-14 数据目录改为 `%LOCALAPPDATA%\io.github.shulkx.mhycarry\`，安装包只为当前用户安装（第 4、8、12 节）
 - v1 范围：Windows，原神国服官服，一个账号
 
 ## 1. 背景与目标
@@ -81,8 +81,8 @@ mhy-carry/
 
 命名约定：
 - 仓库、目录和 Cargo 包名用小写加连字符（`mhy-carry-core`）。
-- 给人看的名字用 `MhyCarry`：窗口标题、安装包、README 标题、数据目录。
-- Tauri identifier 用 `io.github.shulkx.mhycarry`。
+- 给人看的名字用 `MhyCarry`：窗口标题、安装包、安装目录、README 标题。
+- Tauri identifier 用 `io.github.shulkx.mhycarry`，数据目录也用这个名字（第 8 节）。
 
 ## 5. 核心接口（扩展点）
 
@@ -282,7 +282,9 @@ panda 扫码返回的 `passport_qr_url` 来自服务器，同样要校验：http
 
 ## 8. 数据存储（v1 明文）
 
-数据目录是 `%LOCALAPPDATA%\MhyCarry\`。
+数据目录是 `%LOCALAPPDATA%\io.github.shulkx.mhycarry\`，文件夹名就是 Tauri 的应用标识（第 4 节）。
+- 这是 Tauri 应用的标准做法：WebView2 的缓存也在这里，所有数据只有这一个文件夹。卸载时勾选“删除应用程序数据”，会删掉整个文件夹，包括明文凭证。
+- 不叫 `MhyCarry`：安装包只为当前用户安装时，程序装在 `%LOCALAPPDATA%\MhyCarry\`。这是 Tauri 安装包的默认位置，目前改不了（tauri-apps/tauri#7853）。
 - 不放在程序目录，免得用户打包分享程序时把账号一起发出去。
 - 用 `Local` 不用 `Roaming`，免得在域环境里账号随漫游配置文件同步到服务器。
 
@@ -439,7 +441,7 @@ v1 不写日志文件：出错原因和错误码直接显示在界面上和命�
   - `cargo test`：`core` 和 `api` 在 Windows、macOS、Linux 上跑，其余只在 Windows 上跑；
   - `cargo deny check`：检查许可证、RustSec 漏洞库和依赖来源。它已经包含 `cargo audit` 的漏洞检查，所以不再单独跑 `cargo audit`。
 - **`release.yml`**（推送 `v*` tag 时触发，只在 Windows 上构建）：
-  1. 构建 NSIS 安装包和免安装 exe；
+  1. 构建 NSIS 安装包和免安装 exe。安装包只为当前用户安装，不需要管理员权限，程序装到 `%LOCALAPPDATA%\MhyCarry\`；
   2. 生成 `SHA256SUMS`；
   3. 用 `actions/attest-build-provenance` 生成构建来源证明，用户可以用 `gh attestation verify <文件> -R shulkx/mhy-carry` 核对；
   4. 创建 GitHub Release。仓库开启不可变发布（immutable releases），发布后的文件不能替换。

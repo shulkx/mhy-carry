@@ -33,3 +33,17 @@ fn main() {
         mhy_carry_platform::dialog::alert(&format!("MhyCarry 启动失败：{error}"));
     }
 }
+
+#[cfg(test)]
+mod tests {
+    /// 数据目录名必须等于应用标识，卸载时勾选“删除应用程序数据”才会删掉它（设计文档第 8 节）。
+    #[test]
+    fn data_dir_name_is_the_app_identifier() {
+        let config: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        assert_eq!(
+            config["identifier"],
+            mhy_carry_platform::paths::APP_DIR_NAME
+        );
+    }
+}

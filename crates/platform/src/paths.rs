@@ -1,11 +1,16 @@
-//! 数据目录：`%LOCALAPPDATA%\MhyCarry\`。
+//! 数据目录：`%LOCALAPPDATA%\io.github.shulkx.mhycarry\`（设计文档第 8 节）。
+//!
+//! 文件夹名就是 Tauri 的应用标识（identifier），这是 Tauri 应用的标准做法：WebView2 的缓存
+//! 也在这里，卸载时勾选“删除应用程序数据”会删掉整个文件夹，包括明文凭证。
+//! 不能叫 `MhyCarry`：只为当前用户安装时，程序就装在 `%LOCALAPPDATA%\MhyCarry\`。
 
 use std::ffi::OsString;
 use std::path::PathBuf;
 
 /// 设置后用它作为数据目录，开发调试时用来避开真实账号。
 pub const DATA_DIR_ENV: &str = "MHY_CARRY_DATA_DIR";
-const APP_DIR_NAME: &str = "MhyCarry";
+/// 和 `app/src-tauri/tauri.conf.json` 的 `identifier` 一致，app 里有测试核对。
+pub const APP_DIR_NAME: &str = "io.github.shulkx.mhycarry";
 
 #[derive(Debug, thiserror::Error)]
 #[error("找不到系统的本地应用数据目录（%LOCALAPPDATA%）")]
@@ -42,7 +47,7 @@ mod tests {
         let dir = resolve(None, Some(PathBuf::from(r"C:\Users\a\AppData\Local"))).unwrap();
         assert_eq!(
             dir,
-            PathBuf::from(r"C:\Users\a\AppData\Local").join("MhyCarry")
+            PathBuf::from(r"C:\Users\a\AppData\Local\io.github.shulkx.mhycarry")
         );
     }
 
@@ -59,7 +64,7 @@ mod tests {
     #[test]
     fn empty_env_override_is_ignored() {
         let dir = resolve(Some(OsString::new()), Some(PathBuf::from("local"))).unwrap();
-        assert_eq!(dir, PathBuf::from("local").join("MhyCarry"));
+        assert_eq!(dir, PathBuf::from("local").join(APP_DIR_NAME));
     }
 
     #[test]
