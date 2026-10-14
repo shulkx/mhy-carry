@@ -2741,7 +2741,7 @@ dependencies = [
 
 [[package]]
 name = "mhy-carry"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "base64 0.22.1",
  "jiff",
@@ -2760,7 +2760,7 @@ dependencies = [
 
 [[package]]
 name = "mhy-carry-api"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "jiff",
  "mhy-carry-core",
@@ -2775,7 +2775,7 @@ dependencies = [
 
 [[package]]
 name = "mhy-carry-cli"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "clap",
  "image",
@@ -2792,7 +2792,7 @@ dependencies = [
 
 [[package]]
 name = "mhy-carry-core"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "jiff",
  "proptest",
@@ -2809,7 +2809,7 @@ dependencies = [
 
 [[package]]
 name = "mhy-carry-live"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "mhy-carry-core",
  "mhy-carry-platform",
@@ -2823,7 +2823,7 @@ dependencies = [
 
 [[package]]
 name = "mhy-carry-platform"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "dirs",
  "mhy-carry-core",
@@ -2835,7 +2835,7 @@ dependencies = [
 
 [[package]]
 name = "mhy-carry-runner"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "mhy-carry-api",
  "mhy-carry-core",
