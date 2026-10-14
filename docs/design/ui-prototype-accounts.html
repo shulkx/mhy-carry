@@ -1,0 +1,776 @@
+<!-- MhyCarry v0.2 多账号界面原型。只是设计参考，不是正式代码；里面的账号、昵称、窗口名都是示例，绑定二维码是不能扫的示意图。
+     直接用浏览器打开即可，左边点击切换状态，右边窗口里的按钮也能点。单账号时的完整状态见 ui-prototype.html。 -->
+<title>MhyCarry 多账号原型</title>
+<style>
+/* 布局：左边是原型控制栏（切换状态），右边是按真实尺寸画的 440×640 应用窗口。
+   主界面只放一张“使用中”的账号卡片，别的账号收在“切换账号”下拉列表里，账号再多界面也不变长。
+   配色和字体与正式应用（app/ui/style.css）一致；只用系统字体，因为正式应用的 CSP 不允许加载外部资源。 */
+:root {
+  --page: #e9edf1;
+  --window: #ffffff;
+  --sunken: #f3f5f8;
+  --ink: #1b2430;
+  --muted: #5b6878;
+  --line: #d6dde5;
+  --accent: #2d6a99;
+  --accent-ink: #ffffff;
+  --accent-soft: #e3eef7;
+  --ok: #2b7a4b;
+  --warn: #a8701a;
+  --bad: #b8392c;
+  --bad-soft: #f8e6e3;
+  --idle: #8793a1;
+  --titlebar: #e4e9ee;
+  --shadow: 0 18px 40px rgba(24, 38, 56, 0.18);
+  --menu-shadow: 0 10px 26px rgba(24, 38, 56, 0.2);
+  --font-ui: "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "Cascadia Mono", Consolas, "SFMono-Regular", monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --page: #101418;
+    --window: #1a2027;
+    --sunken: #212932;
+    --ink: #e4e9ef;
+    --muted: #9aa6b3;
+    --line: #2e3842;
+    --accent: #6ea8d8;
+    --accent-ink: #0c1621;
+    --accent-soft: #1f3243;
+    --ok: #5cc08a;
+    --warn: #dcae52;
+    --bad: #ee7b6d;
+    --bad-soft: #3a2422;
+    --idle: #7c8997;
+    --titlebar: #151a20;
+    --shadow: 0 18px 40px rgba(0, 0, 0, 0.45);
+    --menu-shadow: 0 10px 26px rgba(0, 0, 0, 0.55);
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page: #101418;
+  --window: #1a2027;
+  --sunken: #212932;
+  --ink: #e4e9ef;
+  --muted: #9aa6b3;
+  --line: #2e3842;
+  --accent: #6ea8d8;
+  --accent-ink: #0c1621;
+  --accent-soft: #1f3243;
+  --ok: #5cc08a;
+  --warn: #dcae52;
+  --bad: #ee7b6d;
+  --bad-soft: #3a2422;
+  --idle: #7c8997;
+  --titlebar: #151a20;
+  --shadow: 0 18px 40px rgba(0, 0, 0, 0.45);
+  --menu-shadow: 0 10px 26px rgba(0, 0, 0, 0.55);
+}
+
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body {
+  margin: 0;
+  background: var(--page);
+  color: var(--ink);
+  font-family: var(--font-ui);
+  font-size: 14px;
+  line-height: 1.55;
+  padding: 24px 16px 40px;
+}
+button, select, input { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.layout {
+  max-width: 1040px;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: minmax(220px, 300px) 1fr;
+  gap: 32px;
+  align-items: start;
+}
+@media (max-width: 760px) {
+  .layout { grid-template-columns: 1fr; }
+}
+
+/* ---- 原型控制栏 ---- */
+.controls h1 { font-size: 20px; margin: 0 0 4px; text-wrap: balance; }
+.controls .lead { color: var(--muted); margin: 0 0 20px; }
+.group { display: grid; gap: 6px; margin-bottom: 18px; }
+.group-label { font-size: 12px; letter-spacing: 0.08em; color: var(--muted); }
+.scenarios { display: flex; flex-wrap: wrap; gap: 6px; }
+.scenario {
+  border: 1px solid var(--line);
+  background: var(--window);
+  border-radius: 6px;
+  padding: 4px 10px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.scenario[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.note {
+  margin-top: 8px;
+  padding: 10px 12px;
+  border-left: 3px solid var(--accent);
+  background: var(--sunken);
+  color: var(--muted);
+  font-size: 13px;
+}
+
+/* ---- 应用窗口 ---- */
+.stage { position: relative; display: flex; justify-content: center; }
+.window {
+  width: 440px;
+  max-width: 100%;
+  height: 640px;
+  background: var(--window);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.titlebar {
+  height: 32px;
+  flex: none;
+  background: var(--titlebar);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-left: 12px;
+  font-size: 12px;
+  user-select: none;
+}
+.titlebar .mark { width: 14px; height: 14px; border: 2px solid var(--accent); border-radius: 3px; position: relative; }
+.titlebar .mark::after { content: ""; position: absolute; inset: 3px; background: var(--accent); }
+.titlebar .caps { margin-left: auto; display: flex; }
+.titlebar .caps span { width: 44px; height: 32px; display: grid; place-items: center; color: var(--muted); }
+.content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 18px 20px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.section-label { font-size: 12px; letter-spacing: 0.08em; color: var(--muted); }
+
+.meta { color: var(--muted); font-size: 13px; }
+.actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.btn {
+  border: 1px solid var(--line);
+  background: var(--window);
+  border-radius: 6px;
+  padding: 5px 14px;
+  cursor: pointer;
+}
+.btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.btn.small { padding: 2px 10px; font-size: 13px; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.btn.danger { color: var(--bad); }
+.btn.big { width: 100%; padding: 10px; font-size: 16px; font-weight: 600; }
+.message { font-size: 13px; padding: 8px 10px; background: var(--sunken); border-radius: 6px; }
+.message.bad { color: var(--bad); }
+.message.ok { color: var(--ok); }
+
+/* ---- 账号区 ---- */
+.account { position: relative; display: grid; gap: 10px; }
+.account-head { display: flex; align-items: center; gap: 8px; }
+.account-head .section-label { margin-right: auto; }
+.switch-btn .count { color: var(--muted); font-variant-numeric: tabular-nums; }
+.switch-btn .caret { font-size: 10px; margin-left: 4px; color: var(--muted); }
+
+/* 头像：名称的首字，没有名称时显示 #。 */
+.avatar {
+  width: 40px; height: 40px;
+  border-radius: 50%;
+  display: grid; place-items: center;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 17px;
+  font-weight: 600;
+  flex: none;
+}
+.avatar.small { width: 28px; height: 28px; font-size: 13px; }
+.avatar.invalid { background: var(--bad-soft); color: var(--bad); }
+
+.level {
+  font-size: 12px;
+  line-height: 18px;
+  padding: 0 6px;
+  border-radius: 4px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.cred { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; white-space: nowrap; }
+.cred::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+.cred.unchecked { color: var(--idle); }
+.cred.valid { color: var(--ok); }
+.cred.invalid { color: var(--bad); }
+
+/* 使用中的账号卡片：左边头像竖跨整张卡片；中间一列从上往下是名称和等级、原神昵称、ID 小标签；
+   右上角是凭证状态和“⋯”。 */
+.card {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr) auto;
+  grid-template-areas: "avatar main side" "avatar chips chips";
+  gap: 0 12px;
+  align-items: start;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 12px 6px 12px 14px;
+}
+.card.invalid { border-color: var(--bad); }
+.card .avatar { grid-area: avatar; margin-top: 2px; }
+.card-main { grid-area: main; display: grid; gap: 2px; min-width: 0; }
+.card-side { grid-area: side; display: flex; align-items: center; gap: 4px; }
+.card-title { display: flex; align-items: center; gap: 8px; min-width: 0; min-height: 28px; }
+.card-title .name { font-size: 17px; font-weight: 600; overflow-wrap: anywhere; }
+.card-sub { font-size: 13px; color: var(--muted); }
+.more {
+  width: 32px; height: 28px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+.more:hover:not(:disabled) { background: var(--sunken); }
+.more:disabled { cursor: not-allowed; opacity: 0.45; }
+/* ID 小标签：左半是标签，右半是号码。 */
+/* 小标签这一行横跨到卡片右边，不和右上角的凭证状态抢宽度。 */
+.chips { grid-area: chips; display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.chip { display: inline-flex; border: 1px solid var(--line); border-radius: 999px; overflow: hidden; font-size: 12px; line-height: 20px; }
+.chip .k { padding: 0 8px; background: var(--sunken); color: var(--muted); }
+.chip .v { padding: 0 9px; font-variant-numeric: tabular-nums; letter-spacing: 0.02em; }
+.chip .v.missing { color: var(--idle); letter-spacing: 0; }
+.name-edit { display: grid; gap: 2px; }
+.name-edit input {
+  width: 100%;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  background: var(--window);
+  padding: 3px 8px;
+  font-size: 15px;
+}
+.name-edit .hint { font-size: 12px; color: var(--muted); }
+
+/* 弹出层：“⋯”菜单和切换账号列表 */
+.popover {
+  position: absolute;
+  z-index: 5;
+  background: var(--window);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: var(--menu-shadow);
+}
+.menu { right: 6px; top: 86px; display: grid; min-width: 132px; padding: 4px; }
+.menu button { text-align: left; border: 0; background: transparent; padding: 6px 10px; border-radius: 4px; cursor: pointer; }
+.menu button:hover, .menu button:focus-visible { background: var(--sunken); }
+.menu .danger { color: var(--bad); }
+.switcher { left: 0; right: 0; top: 34px; padding: 4px; }
+.switcher-list { max-height: 260px; overflow-y: auto; display: grid; gap: 2px; }
+.switch-row {
+  display: grid;
+  grid-template-columns: 16px 28px minmax(0, 1fr) auto;
+  gap: 0 10px;
+  align-items: center;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  border-radius: 6px;
+  padding: 6px 10px 6px 8px;
+  cursor: pointer;
+}
+.switch-row:hover, .switch-row:focus-visible { background: var(--sunken); }
+.switch-row[aria-checked="true"] { background: var(--accent-soft); }
+.switch-row .check { color: var(--accent); font-weight: 700; }
+.switch-row .row-title { display: flex; align-items: center; gap: 6px; min-width: 0; font-weight: 600; }
+.switch-row .row-title span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.switch-row .row-id { grid-column: 3; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.switcher-foot { border-top: 1px solid var(--line); margin-top: 4px; padding: 6px 6px 2px; font-size: 12px; color: var(--muted); }
+
+.bind { display: grid; grid-template-columns: 132px 1fr; gap: 14px; align-items: center; border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
+.bind canvas { width: 132px; height: 132px; background: #ffffff; border: 1px solid var(--line); image-rendering: pixelated; }
+.bind .caption { font-size: 12px; color: var(--muted); }
+.bind .step { font-size: 15px; font-weight: 600; }
+.bind .side { display: grid; gap: 4px; }
+
+/* ---- 扫描 ---- */
+.scan { border-top: 1px solid var(--line); padding-top: 16px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
+.scan .section-label { margin-bottom: -4px; }
+.segmented {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.segmented button { border: 0; background: var(--window); padding: 6px 0; cursor: pointer; }
+.segmented button + button { border-left: 1px solid var(--line); }
+.segmented button[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.segmented button:disabled { cursor: not-allowed; opacity: 0.6; }
+.status {
+  display: grid;
+  grid-template-columns: 12px minmax(0, 1fr);
+  overflow-wrap: anywhere;
+  gap: 10px;
+  align-items: start;
+  background: var(--sunken);
+  border-radius: 8px;
+  padding: 12px 14px;
+  min-height: 74px;
+}
+.dot { width: 12px; height: 12px; border-radius: 50%; margin-top: 6px; background: var(--idle); }
+.dot.scanning { background: var(--accent); animation: pulse 1.6s ease-in-out infinite; }
+.dot.waiting { background: var(--warn); }
+.dot.ok { background: var(--ok); }
+.dot.bad { background: var(--bad); }
+@keyframes pulse { 50% { opacity: 0.35; } }
+@media (prefers-reduced-motion: reduce) { .dot.scanning { animation: none; } }
+.status-text { font-size: 16px; font-weight: 600; }
+.notice { font-size: 13px; color: var(--muted); margin-top: 4px; }
+
+.footer { flex: none; border-top: 1px solid var(--line); padding: 8px 20px; font-size: 12px; color: var(--muted); }
+.footer code { font-family: var(--font-mono); font-size: 11.5px; word-break: break-all; }
+
+/* 系统确认框（示意 Windows MessageBox；默认按钮是“取消”） */
+.msgbox {
+  position: absolute;
+  top: 210px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 400px;
+  max-width: calc(100% - 24px);
+  background: #ffffff;
+  color: #1b1b1b;
+  border: 1px solid #8a8a8a;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+  font-size: 13px;
+}
+.msgbox .mb-title { padding: 6px 10px; font-size: 12px; border-bottom: 1px solid #e3e3e3; }
+.msgbox .mb-body { display: grid; grid-template-columns: 32px 1fr; gap: 12px; padding: 16px 16px 20px; white-space: pre-line; }
+.msgbox .mb-icon {
+  width: 32px; height: 32px;
+  clip-path: polygon(50% 4%, 97% 94%, 3% 94%);
+  background: #f2c037;
+  display: grid; place-items: center;
+  font-weight: 700; padding-top: 8px;
+}
+.msgbox .mb-buttons { background: #f0f0f0; padding: 10px 12px; display: flex; justify-content: flex-end; gap: 8px; }
+.msgbox .mb-buttons button { min-width: 74px; padding: 3px 10px; background: #e1e1e1; border: 1px solid #adadad; color: #1b1b1b; cursor: pointer; }
+.msgbox .mb-buttons button.default { border: 2px solid #0078d7; }
+.msgbox-caption {
+  position: absolute;
+  top: 180px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 12px;
+  color: var(--muted);
+  background: var(--page);
+  padding: 2px 8px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+</style>
+
+<div class="layout">
+  <aside class="controls">
+    <h1>MhyCarry 多账号原型</h1>
+    <p class="lead">点击下面的状态，看右边窗口在每种情况下的样子。窗口里的“切换账号”“⋯”“+ 添加账号”和“开始扫描”也能点。账号、昵称和 ID 都是示例。</p>
+    <div id="groups"></div>
+    <p class="note" id="scenario-note"></p>
+  </aside>
+
+  <main class="stage">
+    <div class="window" role="region" aria-label="MhyCarry 窗口">
+      <div class="titlebar">
+        <span class="mark" aria-hidden="true"></span>
+        <span>MhyCarry</span>
+        <span class="caps" aria-hidden="true"><span>—</span><span>☐</span><span>✕</span></span>
+      </div>
+      <div class="content">
+        <section class="account" aria-labelledby="account-label" id="account"></section>
+
+        <section class="scan" aria-labelledby="scan-label">
+          <div class="section-label" id="scan-label">扫描</div>
+          <div class="segmented" role="group" aria-label="截图目标">
+            <button type="button" id="target-auto" aria-pressed="true">自动</button>
+            <button type="button" id="target-window" aria-pressed="false">指定窗口</button>
+            <button type="button" id="target-monitor" aria-pressed="false">显示器</button>
+          </div>
+          <button type="button" class="btn primary big" id="scan-button"></button>
+          <div class="status" aria-live="polite">
+            <span class="dot" id="status-dot" aria-hidden="true"></span>
+            <div>
+              <div class="status-text" id="status-text"></div>
+              <div class="notice" id="status-notice"></div>
+            </div>
+          </div>
+        </section>
+      </div>
+      <div class="footer" id="footer"></div>
+    </div>
+    <div id="msgbox-layer"></div>
+  </main>
+</div>
+
+<script>
+const FILE_PATH = "%LOCALAPPDATA%\\io.github.shulkx.mhycarry\\accounts.json";
+const CREDENTIAL_LABELS = { unchecked: "凭证未检查", valid: "凭证有效", invalid: "凭证已失效" };
+const SHORT_CREDENTIAL = { unchecked: "未检查", valid: "有效", invalid: "已失效" };
+const BUSY_SCAN = ["checking", "scanning", "confirm", "logging-in"];
+
+// 示例账号。role 是查到的原神角色（官服），null 表示还没查到。
+const SAMPLE = {
+  a1: { id: "a1", note: "大号", passport: "300012345", credential: "valid", role: { nickname: "旅行者", level: 60, uid: "100000001" } },
+  a2: { id: "a2", note: "", passport: "300067890", credential: "unchecked", role: { nickname: "派蒙", level: 35, uid: "100000002" } },
+  a3: { id: "a3", note: "小号", passport: "300099999", credential: "unchecked", role: null },
+  a4: { id: "a4", note: "", passport: "300011111", credential: "unchecked", role: { nickname: "空", level: 58, uid: "100000004" } },
+  a5: { id: "a5", note: "朋友寄存", passport: "300022222", credential: "valid", role: { nickname: "荧", level: 52, uid: "100000005" } },
+  a6: { id: "a6", note: "", passport: "300033333", credential: "unchecked", role: { nickname: "可莉", level: 20, uid: "100000006" } },
+  a7: { id: "a7", note: "", passport: "300044444", credential: "unchecked", role: null },
+};
+const acct = (id, changes = {}) => ({ ...SAMPLE[id], ...changes });
+const MANY = ["a1", "a2", "a3", "a4", "a5", "a6", "a7"].map((id) => acct(id));
+
+const SCENARIOS = [
+  { group: "账号", id: "none", label: "未绑定", accounts: [],
+    note: "没有账号时和 v0.1 一样，只有一个绑定按钮。" },
+  { group: "账号", id: "one", label: "一个账号", accounts: [acct("a1", { credential: "unchecked" })], active: "a1",
+    note: "只有一个账号时没有“切换账号”按钮。名称按“备注 → 原神昵称 → 通行证 ID”取第一个有值的；有备注时，原神昵称放在名称下面。" },
+  { group: "账号", id: "many", label: "多个账号", accounts: [acct("a1"), acct("a2"), acct("a3")], active: "a1",
+    note: "主界面只显示使用中的账号。其他账号收在“切换账号”里，账号再多，这一块的高度也不变。" },
+  { group: "账号", id: "switch", label: "切换账号", accounts: [acct("a1"), acct("a2"), acct("a3")], active: "a1", open: "switch",
+    note: "点一行就切换过去，列表随即收起。每行标明原神 UID；没查到原神角色的账号标通行证 ID。" },
+  { group: "账号", id: "lots", label: "账号很多", accounts: MANY, active: "a5", open: "switch",
+    note: "列表最多显示约 5 行，更多的在列表里滚动，不会撑长窗口。" },
+  { group: "账号", id: "norole", label: "没查到原神角色", accounts: [acct("a1"), acct("a3")], active: "a3",
+    note: "还没查到原神角色（刚绑定、接口出错、这个通行证没有官服角色）时，原神 UID 显示“未查到”，其他照常。" },
+  { group: "账号", id: "invalid", label: "账号失效", accounts: [acct("a1"), acct("a2", { credential: "invalid" })], active: "a2", open: "menu",
+    stop: { text: "账号「派蒙」的凭证已失效，请重新绑定这个账号", tone: "bad" },
+    note: "开始扫描时发现凭证失效：卡片变红，“⋯”菜单里“重新绑定”排在第一项。其他账号不受影响。" },
+  { group: "账号", id: "edit", label: "编辑备注", accounts: [acct("a1"), acct("a2")], active: "a2", edit: true,
+    note: "在卡片里直接改，回车保存，Esc 取消；最多 20 个字，清空就是去掉备注。" },
+  { group: "账号", id: "leftovers", label: "有残留旧文件", accounts: [acct("a1")], active: "a1", leftovers: 1,
+    note: "账号文件损坏时留下的备份里可能有明文凭证，单独用按钮删除，不跟着解绑一起删。" },
+
+  { group: "绑定", id: "add", label: "添加账号", accounts: [acct("a1"), acct("a2")], active: "a1", bind: { },
+    note: "绑定时二维码面板临时替换掉卡片。扫码时登录的是哪个米游社账号，就添加哪个；已经在列表里的账号只更新凭证。" },
+  { group: "绑定", id: "rebind", label: "重新绑定", accounts: [acct("a1"), acct("a2", { credential: "invalid" })], active: "a2",
+    bind: { passport: "300067890" },
+    note: "和添加账号是同一个流程，只是多一句提示，提醒你在米游社 App 里登录对应的账号再扫。" },
+  { group: "绑定", id: "added", label: "绑定成功", accounts: [acct("a1"), acct("a2"), acct("a3")], active: "a3",
+    message: { text: "已添加账号「小号」，并设为使用中。", tone: "ok" },
+    note: "新添加的账号自动设为使用中，提示 5 秒后自动收起。“小号”刚绑定，原神角色还在查。" },
+
+  { group: "扫描", id: "scanning", label: "扫描中", accounts: [acct("a1"), acct("a2"), acct("a3")], active: "a1", scan: "scanning",
+    note: "扫描中不能切换、添加、编辑或解绑账号。大按钮写着扫描用的账号。" },
+  { group: "扫描", id: "confirm", label: "等你确认", accounts: [acct("a1"), acct("a2"), acct("a3")], active: "a1", scan: "confirm",
+    note: "确认框写明账号名称、原神 UID 和通行证 ID；还没查到角色时省掉原神 UID。置顶，默认按钮是“取消”。" },
+
+  { group: "解绑", id: "unbind", label: "解绑确认", accounts: [acct("a1"), acct("a2"), acct("a3")], active: "a3", unbind: true,
+    note: "解绑使用中的这个账号，先用系统确认框问你。这个确认框挂在主窗口上，不置顶。解绑后改用列表里的第一个账号。" },
+];
+
+const $ = (id) => document.getElementById(id);
+let scenario = SCENARIOS[2];
+let state = null;
+let timer = null;
+
+function el(tag, attrs = {}, text) {
+  const node = document.createElement(tag);
+  for (const [key, value] of Object.entries(attrs)) node.setAttribute(key, value);
+  if (text !== undefined) node.textContent = text;
+  return node;
+}
+
+function button(label, className, onClick, attrs = {}) {
+  const node = el("button", { type: "button", class: className, ...attrs }, label);
+  node.addEventListener("click", onClick);
+  return node;
+}
+
+const nameOf = (a) => a.note || a.role?.nickname || a.passport;
+const initialOf = (a) => (a.note || a.role?.nickname ? [...nameOf(a)][0] : "#");
+const activeAccount = () => state.accounts.find((a) => a.id === state.active) ?? state.accounts[0];
+const scanning = () => BUSY_SCAN.includes(state.scan);
+const locked = () => scanning() || Boolean(state.bind);
+
+function avatar(a, small = false) {
+  return el("span", { class: "avatar" + (small ? " small" : "") + (a.credential === "invalid" ? " invalid" : ""), "aria-hidden": "true" }, initialOf(a));
+}
+
+function renderControls() {
+  const groups = $("groups");
+  groups.replaceChildren();
+  for (const name of [...new Set(SCENARIOS.map((s) => s.group))]) {
+    const box = el("div", { class: "group" });
+    box.append(el("div", { class: "group-label" }, name));
+    const row = el("div", { class: "scenarios" });
+    for (const s of SCENARIOS.filter((s) => s.group === name)) {
+      row.append(button(s.label, "scenario", () => show(s), { id: "scenario-" + s.id, "aria-pressed": String(s === scenario) }));
+    }
+    box.append(row);
+    groups.append(box);
+  }
+  $("scenario-note").textContent = scenario.note;
+}
+
+function drawFakeQr(canvas) {
+  // 只是示意图：随机方块加三个定位角，不是真的二维码，扫不出东西。
+  const n = 25, ctx = canvas.getContext("2d");
+  canvas.width = n; canvas.height = n;
+  ctx.fillStyle = "#ffffff"; ctx.fillRect(0, 0, n, n);
+  ctx.fillStyle = "#111111";
+  let seed = 11;
+  const rand = () => (seed = (seed * 9301 + 49297) % 233280) / 233280;
+  for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) if (rand() > 0.55) ctx.fillRect(x, y, 1, 1);
+  for (const [fx, fy] of [[1, 1], [n - 8, 1], [1, n - 8]]) {
+    ctx.fillStyle = "#ffffff"; ctx.fillRect(fx - 1, fy - 1, 9, 9);
+    ctx.fillStyle = "#111111"; ctx.fillRect(fx, fy, 7, 7);
+    ctx.fillStyle = "#ffffff"; ctx.fillRect(fx + 1, fy + 1, 5, 5);
+    ctx.fillStyle = "#111111"; ctx.fillRect(fx + 2, fy + 2, 3, 3);
+  }
+}
+
+function renderHead() {
+  const head = el("div", { class: "account-head" });
+  head.append(el("div", { class: "section-label", id: "account-label" }, "账号"));
+  if (state.accounts.length > 1) {
+    const toggle = button("", "btn small switch-btn", () => { state.open = state.open === "switch" ? null : "switch"; render(); },
+      { id: "switch-account", "aria-haspopup": "listbox", "aria-expanded": String(state.open === "switch") });
+    toggle.append("切换账号 ", el("span", { class: "count" }, "(" + state.accounts.length + ")"), el("span", { class: "caret", "aria-hidden": "true" }, "▼"));
+    toggle.disabled = locked();
+    head.append(toggle);
+  }
+  if (state.accounts.length > 0) {
+    const add = button("+ 添加账号", "btn small", () => { state.bind = {}; state.open = null; render(); }, { id: "add-account" });
+    add.disabled = locked();
+    head.append(add);
+  }
+  return head;
+}
+
+function renderBind() {
+  const wrap = el("div", { class: "bind" });
+  const qr = el("div");
+  const canvas = el("canvas", { "aria-label": "绑定二维码（示意图）" });
+  drawFakeQr(canvas);
+  qr.append(canvas, el("div", { class: "caption" }, "示意图，不能扫"));
+  const side = el("div", { class: "side" });
+  side.append(el("div", { class: "step" }, "用米游社 App 扫描左边的二维码"));
+  side.append(el("div", { class: "meta" }, state.bind.passport
+    ? "请先在米游社 App 里登录通行证 " + state.bind.passport + "，再扫码。"
+    : "扫码时登录的是哪个账号，就添加哪个。扫码后在手机上确认。"));
+  const actions = el("div", { class: "actions" });
+  actions.append(button("取消", "btn", () => { state.bind = null; render(); }));
+  side.append(actions);
+  wrap.append(qr, side);
+  return wrap;
+}
+
+function renderCard(a) {
+  const card = el("div", { class: "card" + (a.credential === "invalid" ? " invalid" : "") });
+  const main = el("div", { class: "card-main" });
+  if (state.edit) {
+    const box = el("div", { class: "name-edit" });
+    const input = el("input", { type: "text", maxlength: "20", id: "note-input", "aria-label": "备注", placeholder: "备注，比如“大号”" });
+    input.value = a.note;
+    input.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") { a.note = input.value.trim().slice(0, 20); state.edit = false; render(); }
+      if (event.key === "Escape") { state.edit = false; render(); }
+    });
+    box.append(input, el("div", { class: "hint" }, "回车保存，Esc 取消；最多 20 个字"));
+    main.append(box);
+    queueMicrotask(() => input.focus());
+  } else {
+    const line = el("div", { class: "card-title" });
+    line.append(el("span", { class: "name" }, nameOf(a)));
+    if (a.role) line.append(el("span", { class: "level" }, "Lv." + a.role.level));
+    main.append(line);
+    // 名称用的是备注时，下面补一行原神昵称。
+    if (a.note && a.role) main.append(el("div", { class: "card-sub" }, "原神昵称 " + a.role.nickname));
+  }
+  const chips = el("div", { class: "chips" });
+  for (const [k, v] of [["原神 UID", a.role?.uid], ["通行证", a.passport]]) {
+    const chip = el("span", { class: "chip" });
+    chip.append(el("span", { class: "k" }, k), el("span", { class: "v" + (v ? "" : " missing") }, v ?? "未查到"));
+    chips.append(chip);
+  }
+
+  const side = el("div", { class: "card-side" });
+  const more = button("⋯", "more", () => { state.open = state.open === "menu" ? null : "menu"; render(); },
+    { "aria-label": "更多操作", "aria-haspopup": "menu", "aria-expanded": String(state.open === "menu") });
+  more.disabled = locked();
+  side.append(el("span", { class: "cred " + a.credential }, CREDENTIAL_LABELS[a.credential]), more);
+  card.append(avatar(a), main, side, chips);
+  return card;
+}
+
+function renderMenu(a) {
+  const menu = el("div", { class: "popover menu", role: "menu" });
+  const items = [
+    button("编辑备注", "", () => { state.open = null; state.edit = true; render(); }, { role: "menuitem" }),
+    button("重新绑定", "", () => { state.open = null; state.bind = { passport: a.passport }; render(); }, { role: "menuitem" }),
+    button("解绑", "danger", () => { state.open = null; state.unbind = true; render(); }, { role: "menuitem" }),
+  ];
+  if (a.credential === "invalid") items.unshift(items.splice(1, 1)[0]);
+  menu.append(...items);
+  return menu;
+}
+
+function renderSwitcher() {
+  const box = el("div", { class: "popover switcher" });
+  const list = el("div", { class: "switcher-list", role: "listbox", "aria-label": "切换使用中的账号" });
+  for (const a of state.accounts) {
+    const selected = a.id === activeAccount().id;
+    const row = button("", "switch-row", () => { state.active = a.id; state.open = null; state.stop = null; render(); },
+      { role: "option", "aria-checked": String(selected), "aria-selected": String(selected) });
+    const title = el("span", { class: "row-title" });
+    title.append(el("span", {}, nameOf(a)));
+    if (a.role) title.append(el("span", { class: "level" }, "Lv." + a.role.level));
+    row.append(el("span", { class: "check", "aria-hidden": "true" }, selected ? "✓" : ""), avatar(a, true), title,
+      el("span", { class: "cred " + a.credential }, SHORT_CREDENTIAL[a.credential]),
+      el("span", { class: "row-id" }, a.role ? "原神 UID " + a.role.uid : "通行证 " + a.passport));
+    list.append(row);
+  }
+  box.append(list, el("div", { class: "switcher-foot" }, "共 " + state.accounts.length + " 个账号。要编辑或解绑某个账号，先切换到它，再用卡片上的“⋯”。"));
+  return box;
+}
+
+function renderAccount() {
+  const box = $("account");
+  box.replaceChildren(renderHead());
+  if (state.bind) {
+    box.append(renderBind());
+  } else if (state.accounts.length === 0) {
+    box.append(el("div", { class: "meta" }, "还没有绑定账号。用米游社 App 扫码绑定后，就能用这个账号确认游戏登录。"));
+    const actions = el("div", { class: "actions" });
+    actions.append(button("用米游社扫码绑定", "btn primary", () => { state.bind = {}; render(); }));
+    box.append(actions);
+  } else {
+    box.append(renderCard(activeAccount()));
+    if (state.open === "menu" && !locked()) box.append(renderMenu(activeAccount()));
+  }
+  if (state.open === "switch" && !locked() && state.accounts.length > 1) box.append(renderSwitcher());
+  if (state.message) box.append(el("div", { class: "message " + state.message.tone }, state.message.text));
+  if (state.leftovers) {
+    const actions = el("div", { class: "actions" });
+    actions.append(button("删除旧账号文件", "btn danger", () => { state.leftovers = 0; render(); }));
+    box.append(actions);
+  }
+
+  const footer = $("footer");
+  footer.replaceChildren("凭证明文保存在 ", el("code", {}, FILE_PATH), "，解绑某个账号会删除它的凭证。");
+  if (state.leftovers) footer.append(el("div", {}, "另有 " + state.leftovers + " 个旧账号文件（账号文件损坏时留下的备份），可以点上面的“删除旧账号文件”删掉。"));
+}
+
+function renderScan() {
+  for (const name of ["auto", "window", "monitor"]) $("target-" + name).disabled = scanning();
+  const start = $("scan-button");
+  const current = state.accounts.length ? activeAccount() : null;
+  if (scanning()) {
+    start.textContent = "停止";
+    start.disabled = state.scan === "logging-in";
+  } else {
+    start.textContent = current ? "开始扫描（" + nameOf(current) + "）" : "开始扫描";
+    start.disabled = !current || current.credential === "invalid" || Boolean(state.bind);
+  }
+  const texts = {
+    idle: state.stop ? ["已停止：" + state.stop.text, state.stop.tone === "bad" ? "bad" : ""] : ["未在扫描", ""],
+    checking: ["检查账号凭证…", "waiting"],
+    scanning: ["正在扫描 YuanShen.exe（原神）", "scanning"],
+    confirm: ["等你确认是否登录", "waiting"],
+  };
+  const [text, dot] = texts[state.scan] ?? texts.idle;
+  $("status-dot").className = "dot " + dot;
+  $("status-text").textContent = text;
+  $("status-notice").textContent = !current ? "绑定账号后才能开始扫描。" : state.bind ? "绑定完成前不能开始扫描。" : "";
+}
+
+function renderMsgbox() {
+  const layer = $("msgbox-layer");
+  layer.replaceChildren();
+  let caption, text, onOk = () => {};
+  const a = state.accounts.length ? activeAccount() : null;
+  if (state.scan === "confirm") {
+    const who = a.note || a.role
+      ? "用账号「" + nameOf(a) + "」（" + [a.role ? "原神 UID " + a.role.uid : null, "通行证 " + a.passport].filter(Boolean).join("，") + "）"
+      : "用通行证 " + a.passport + " 的账号";
+    caption = "系统确认框（置顶，实际会盖在游戏上面）";
+    text = "在 YuanShen.exe（原神）中发现原神登录二维码。" + who + "登录？确认后，显示这个二维码的设备将登录你的账号。";
+  } else if (state.unbind) {
+    caption = "系统确认框（挂在主窗口上）";
+    text = "解绑账号「" + nameOf(a) + "」（通行证 " + a.passport + "）？会删除本机保存的这个账号的凭证。\n\n这不会让凭证在服务器端失效；需要的话，请在米游社 App 里下线设备或修改密码。";
+    onOk = () => { state.accounts = state.accounts.filter((x) => x.id !== a.id); state.active = state.accounts[0]?.id; };
+  } else {
+    return;
+  }
+  const close = () => { if (state.scan === "confirm") state.scan = "scanning"; state.unbind = false; render(); };
+  layer.append(el("div", { class: "msgbox-caption" }, caption));
+  const box = el("div", { class: "msgbox", role: "dialog", "aria-label": "MhyCarry 确认" });
+  box.append(el("div", { class: "mb-title" }, "MhyCarry"));
+  const body = el("div", { class: "mb-body" });
+  body.append(el("div", { class: "mb-icon", "aria-hidden": "true" }, "!"), el("div", {}, text));
+  const buttons = el("div", { class: "mb-buttons" });
+  buttons.append(button("确定", "", () => { onOk(); close(); }), button("取消", "default", close));
+  box.append(body, buttons);
+  layer.append(box);
+}
+
+function render() {
+  renderControls();
+  renderAccount();
+  renderScan();
+  renderMsgbox();
+}
+
+function show(next) {
+  clearTimeout(timer);
+  scenario = next;
+  state = {
+    accounts: next.accounts.map((a) => ({ ...a, role: a.role && { ...a.role } })),
+    active: next.active,
+    scan: next.scan ?? "idle",
+    stop: next.stop ?? null,
+    bind: next.bind ?? null,
+    message: next.message ?? null,
+    leftovers: next.leftovers ?? 0,
+    open: next.open ?? null,
+    edit: next.edit ?? false,
+    unbind: next.unbind ?? false,
+  };
+  render();
+}
+
+$("scan-button").addEventListener("click", () => {
+  clearTimeout(timer);
+  state.open = null;
+  if (scanning()) {
+    state.scan = "idle";
+    state.stop = { text: "你手动停止了扫描", tone: "" };
+  } else {
+    state.scan = "checking";
+    state.stop = null;
+    timer = setTimeout(() => { state.scan = "scanning"; render(); }, 900);
+  }
+  render();
+});
+for (const name of ["auto", "window", "monitor"]) {
+  $("target-" + name).addEventListener("click", () => {
+    for (const other of ["auto", "window", "monitor"]) $("target-" + other).setAttribute("aria-pressed", String(other === name));
+  });
+}
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && state.open) { state.open = null; render(); }
+});
+
+show(scenario);
+</script>
