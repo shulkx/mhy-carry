@@ -117,7 +117,9 @@ button, select, input { font: inherit; color: inherit; }
 }
 .status {
   display: grid;
-  grid-template-columns: 12px 1fr;
+  /* 状态文字里有窗口标题，一长串不含空格的文字也要能折行，不撑出窗口。 */
+  grid-template-columns: 12px minmax(0, 1fr);
+  overflow-wrap: anywhere;
   gap: 10px;
   align-items: start;
   background: var(--sunken);
