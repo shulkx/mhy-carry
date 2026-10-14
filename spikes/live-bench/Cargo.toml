@@ -1,0 +1,20 @@
+[package]
+name = "live-bench"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+# 直播流实验（v0.3 设计）：匿名取 B 站 FLV 流，用 Windows 自带的 H.264 解码器解码，
+# 统计帧率、解码和识别耗时。不在工作区里，单独编译。
+[dependencies]
+qrcode = { version = "0.14", default-features = false }
+image = { version = "0.25", default-features = false, features = ["png"] }
+reqwest = "0.13"
+rxing = { version = "0.9", default-features = false, features = ["decoders", "qrcode", "multi_barcode_readers", "encoding_rs"] }
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "rt", "time"] }
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_Media_MediaFoundation",
+    "Win32_System_Com",
+] }

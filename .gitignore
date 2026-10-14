@@ -3,3 +3,5 @@ target/
 spikes/capture-bench/*.png
 # Tauri 编译时生成的权限说明文件，每次编译都会重新生成
 app/src-tauri/gen/
+# 直播流实验保存的画面，拍到的是别人的直播
+spikes/live-bench/*.png
