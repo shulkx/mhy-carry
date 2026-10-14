@@ -1,6 +1,10 @@
 //! 确认策略（设计文档第 5 节）：识别到合法的登录二维码后怎么做。
+//!
+//! v0.3 起自动确认由你决定开不开，四种画面来源都可以开，不再有按来源区分的硬性规则
+//! （设计文档第 6.5、9 节）。同一帧有多个登录码时不登录、确认前核对应用 ID 这两条，
+//! 写在扫码会话和登录流程里，任何策略都绕不开。
 
-use crate::capture::{SourceInfo, SourceKind};
+use crate::capture::SourceInfo;
 use crate::qr::LoginQr;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -17,7 +21,7 @@ pub trait ConfirmPolicy {
     fn decide(&mut self, source: &SourceInfo, qr: &LoginQr) -> Decision;
 }
 
-/// v1 唯一的策略：每次都问你。
+/// 每次都问你。“自动确认”关着时用它。
 #[derive(Debug, Default, Clone, Copy)]
 pub struct AlwaysAsk;
 
@@ -27,20 +31,20 @@ impl ConfirmPolicy for AlwaysAsk {
     }
 }
 
-/// 硬性规则：画面来自指定窗口或显示器时，永远不自动确认。那里的画面可能是
-/// 别人的直播，二维码可能是别人故意放的。任何策略的决定都要先过这一关。
-pub fn enforce_hard_rules(decision: Decision, source: &SourceInfo) -> Decision {
-    match (decision, source.kind) {
-        (Decision::AutoConfirm, SourceKind::PickedWindow | SourceKind::Monitor) => {
-            Decision::AskUser
-        }
-        (decision, _) => decision,
+/// 识别到合法的登录码就直接登录。“自动确认”开着时用它（设计文档第 6.5 节）。
+#[derive(Debug, Default, Clone, Copy)]
+pub struct AlwaysAutoConfirm;
+
+impl ConfirmPolicy for AlwaysAutoConfirm {
+    fn decide(&mut self, _source: &SourceInfo, _qr: &LoginQr) -> Decision {
+        Decision::AutoConfirm
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::capture::SourceKind;
     use crate::qr::parse_login_qr;
 
     fn qr() -> LoginQr {
@@ -58,22 +62,18 @@ mod tests {
     }
 
     #[test]
-    fn auto_confirm_is_only_allowed_for_the_game_window() {
-        let cases = [
-            (SourceKind::GameWindow, Decision::AutoConfirm),
-            (SourceKind::PickedWindow, Decision::AskUser),
-            (SourceKind::Monitor, Decision::AskUser),
-        ];
-        for (kind, expected) in cases {
+    fn auto_confirm_confirms_every_source() {
+        for kind in [
+            SourceKind::GameWindow,
+            SourceKind::PickedWindow,
+            SourceKind::Monitor,
+            SourceKind::LiveStream,
+        ] {
             let source = SourceInfo::new(kind, "x");
             assert_eq!(
-                enforce_hard_rules(Decision::AutoConfirm, &source),
-                expected,
+                AlwaysAutoConfirm.decide(&source, &qr()),
+                Decision::AutoConfirm,
                 "{kind:?}"
-            );
-            assert_eq!(
-                enforce_hard_rules(Decision::Ignore, &source),
-                Decision::Ignore
             );
         }
     }

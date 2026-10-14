@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use serde::Serialize;
 
 use crate::capture::{CaptureError, FrameSource, SourceInfo, SourceKind};
-use crate::confirm::{ConfirmPolicy, Decision, enforce_hard_rules};
+use crate::confirm::{ConfirmPolicy, Decision};
 use crate::decode::QrDecoder;
 use crate::qr::{LoginQr, parse_login_qr};
 use crate::text::printable;
@@ -52,6 +52,12 @@ pub enum Observation {
     TargetGone,
     /// 这一帧没截成。
     CaptureFailed(String),
+    /// 直播间没开播。
+    LiveOffline,
+    /// 正在连接直播流。
+    LiveConnecting,
+    /// 直播流彻底连不上，内容是原因。
+    LiveFailed(String),
 }
 
 /// 截一帧并识别。截图线程反复调用它，把结果交给会话。
@@ -66,6 +72,9 @@ pub fn observe(source: &mut dyn FrameSource, decoder: &dyn QrDecoder) -> Observa
         Err(CaptureError::InBackground) => Observation::TargetInBackground,
         Err(CaptureError::Gone) => Observation::TargetGone,
         Err(CaptureError::Failed(message)) => Observation::CaptureFailed(message),
+        Err(CaptureError::Offline) => Observation::LiveOffline,
+        Err(CaptureError::Connecting) => Observation::LiveConnecting,
+        Err(CaptureError::LiveFailed(message)) => Observation::LiveFailed(message),
     }
 }
 
@@ -152,6 +161,10 @@ pub enum ScanStatus {
     Paused,
     /// 自动模式下游戏窗口不在最前面，切回游戏后继续。`game` 是游戏名。
     GameInBackground { game: String },
+    /// 直播间没开播，开播后自动连接。`room` 是直播间的名称，比如“B 站直播间 12345”。
+    WaitingForLive { room: String },
+    /// 正在连接直播流。
+    ConnectingLive { room: String },
     /// 正在扫描，`notice` 是最近一条提示。
     Scanning {
         source: String,
@@ -184,6 +197,8 @@ impl fmt::Display for ScanStatus {
             ScanStatus::GameInBackground { game } => {
                 write!(f, "{game}不在最前面，切回游戏后继续")
             }
+            ScanStatus::WaitingForLive { room } => write!(f, "等待开播：{room}"),
+            ScanStatus::ConnectingLive { room } => write!(f, "正在连接 {room}…"),
             ScanStatus::Scanning { source, .. } => write!(f, "正在扫描 {source}"),
             ScanStatus::AwaitingConfirm { .. } => write!(f, "等你确认是否登录"),
             ScanStatus::LoggingIn => write!(f, "正在登录…"),
@@ -195,21 +210,36 @@ impl fmt::Display for ScanStatus {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum StopReason {
-    LoggedIn { game: String },
+    /// `elapsed_ms` 是从发现二维码到登录完成的毫秒数（设计文档第 6.5 节）。
+    LoggedIn {
+        game: String,
+        elapsed_ms: u64,
+    },
     UserStopped,
-    IdleTimeout { secs: u64 },
+    IdleTimeout {
+        secs: u64,
+    },
     CredentialInvalid,
     TargetGone,
-    CaptureFailing { message: String },
-    CredentialCheckFailed { message: String },
+    CaptureFailing {
+        message: String,
+    },
+    CredentialCheckFailed {
+        message: String,
+    },
+    LiveFailed {
+        message: String,
+    },
 }
 
 impl fmt::Display for StopReason {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            StopReason::LoggedIn { game } => {
-                write!(f, "登录成功，显示二维码的{game}已登录你的账号")
-            }
+            StopReason::LoggedIn { game, elapsed_ms } => write!(
+                f,
+                "登录成功，显示二维码的{game}已登录你的账号（从发现二维码到登录完成用了 {:.2} 秒）",
+                *elapsed_ms as f64 / 1000.0
+            ),
             StopReason::UserStopped => write!(f, "你手动停止了扫描"),
             StopReason::IdleTimeout { secs } => write!(f, "连续 {secs} 秒没发现登录二维码"),
             StopReason::CredentialInvalid => write!(f, "账号凭证已失效，请重新绑定"),
@@ -220,6 +250,7 @@ impl fmt::Display for StopReason {
             StopReason::CredentialCheckFailed { message } => {
                 write!(f, "检查账号凭证时出错：{message}")
             }
+            StopReason::LiveFailed { message } => write!(f, "直播流连不上：{message}"),
         }
     }
 }
@@ -255,7 +286,8 @@ pub struct ScanSession {
     target: SourceInfo,
     /// 确认框里怎么称呼要登录的账号。
     account: String,
-    idle_timeout: Duration,
+    /// 没发现新登录码多久就停止。直播间是 None：抢码要等主播出码，可能等很久（设计文档第 6.5 节）。
+    idle_timeout: Option<Duration>,
     policy: Box<dyn ConfirmPolicy + Send>,
     status: ScanStatus,
     /// 超时从这个时间点算起：会话开始、上一次发现新的合法登录码、你回答、登录结束。
@@ -268,6 +300,8 @@ pub struct ScanSession {
     recognized: HashSet<String>,
     /// 正在确认或登录的二维码。
     pending: Option<LoginQr>,
+    /// 发现正在确认或登录的这个二维码的时间，用来算登录用时。
+    found_at: Option<Instant>,
     /// 登录中途你要求停止：等登录结果出来再停。
     stop_requested: bool,
     /// 最近一帧画面的来源，回到扫描状态时显示。
@@ -285,10 +319,10 @@ impl ScanSession {
         now: Now,
     ) -> (Self, Action) {
         let session = Self {
+            idle_timeout: (target.kind != SourceKind::LiveStream).then_some(idle_timeout),
             source_label: target.label.clone(),
             target,
             account,
-            idle_timeout,
             policy,
             status: ScanStatus::CheckingCredential,
             idle_since: now.instant,
@@ -296,6 +330,7 @@ impl ScanSession {
             seen: HashSet::new(),
             recognized: HashSet::new(),
             pending: None,
+            found_at: None,
             stop_requested: false,
             notice: None,
         };
@@ -316,7 +351,7 @@ impl ScanSession {
             return None;
         }
         if matches!(event, Event::Tick | Event::Observed(_)) && self.idle_expired(now) {
-            let secs = self.idle_timeout.as_secs();
+            let secs = self.idle_timeout.map_or(0, |timeout| timeout.as_secs());
             return Some(self.finish(StopReason::IdleTimeout { secs }));
         }
         match event {
@@ -337,12 +372,17 @@ impl ScanSession {
             ScanStatus::WaitingForWindow { .. }
                 | ScanStatus::Paused
                 | ScanStatus::GameInBackground { .. }
+                | ScanStatus::WaitingForLive { .. }
+                | ScanStatus::ConnectingLive { .. }
                 | ScanStatus::Scanning { .. }
         )
     }
 
     fn idle_expired(&self, now: Now) -> bool {
-        self.watching() && now.instant.duration_since(self.idle_since) >= self.idle_timeout
+        self.watching()
+            && self
+                .idle_timeout
+                .is_some_and(|timeout| now.instant.duration_since(self.idle_since) >= timeout)
     }
 
     fn finish(&mut self, reason: StopReason) -> Action {
@@ -380,10 +420,14 @@ impl ScanSession {
         match result {
             Ok(()) => {
                 self.idle_since = now.instant;
-                if self.target.kind == SourceKind::GameWindow {
-                    self.show_waiting();
-                } else {
-                    self.show_scanning();
+                match self.target.kind {
+                    SourceKind::GameWindow => self.show_waiting(),
+                    SourceKind::LiveStream => {
+                        self.status = ScanStatus::ConnectingLive {
+                            room: self.target.label.clone(),
+                        };
+                    }
+                    SourceKind::PickedWindow | SourceKind::Monitor => self.show_scanning(),
                 }
                 None
             }
@@ -430,6 +474,21 @@ impl ScanSession {
                     None
                 }
             }
+            Observation::LiveOffline => {
+                self.status = ScanStatus::WaitingForLive {
+                    room: self.target.label.clone(),
+                };
+                None
+            }
+            Observation::LiveConnecting => {
+                self.status = ScanStatus::ConnectingLive {
+                    room: self.target.label.clone(),
+                };
+                None
+            }
+            Observation::LiveFailed(message) => Some(self.finish(StopReason::LiveFailed {
+                message: printable(&message),
+            })),
             Observation::Frame { source, texts } => {
                 self.capture_failures = 0;
                 self.on_frame(source, &texts, now)
@@ -471,9 +530,9 @@ impl ScanSession {
             self.show_scanning();
             return None;
         }
-        // 硬性规则既看画面自己报的来源，也看你开始时选的目标，取严格的那个。
-        let decision = enforce_hard_rules(self.policy.decide(&source, &qr), &source);
-        match enforce_hard_rules(decision, &self.target) {
+        // v0.3 起自动确认由你决定开不开，不再按来源区分（设计文档第 6.5 节）。
+        self.found_at = Some(now.instant);
+        match self.policy.decide(&source, &qr) {
             Decision::Ignore => {
                 self.show_scanning();
                 None
@@ -526,8 +585,12 @@ impl ScanSession {
         // 只有凭证失效才停止；其他失败只影响这一个二维码（设计文档第 6.2 节第 7 步）。
         let notice = match result {
             Ok(()) => {
+                let elapsed_ms = self.found_at.take().map_or(0, |found| {
+                    now.instant.saturating_duration_since(found).as_millis() as u64
+                });
                 return Some(self.finish(StopReason::LoggedIn {
                     game: game.to_owned(),
+                    elapsed_ms,
                 }));
             }
             Err(Failure::CredentialInvalid) => {
@@ -555,7 +618,7 @@ impl ScanSession {
 mod tests {
     use super::*;
     use crate::capture::Frame;
-    use crate::confirm::AlwaysAsk;
+    use crate::confirm::{AlwaysAsk, AlwaysAutoConfirm};
 
     const VALID: &str = "https://user.mihoyo.com/qr_code_in_game.html?app_id=4&biz_key=hk4e_cn&expire=4102444800&ticket=66cf3afb2a1c7a308832bd56";
     const ACCOUNT: &str = "账号「大号」（原神 UID 100000001，通行证 300012345）";
@@ -644,15 +707,6 @@ mod tests {
         asked(session.handle(frame(found_game(), &[VALID]), clock.at(1)));
         login_ticket(session.handle(Event::Answered(true), clock.at(2)));
         session
-    }
-
-    /// 什么码都自动确认的策略，用来检查硬性规则。
-    struct AutoConfirmAll;
-
-    impl ConfirmPolicy for AutoConfirmAll {
-        fn decide(&mut self, _source: &SourceInfo, _qr: &LoginQr) -> Decision {
-            Decision::AutoConfirm
-        }
     }
 
     // ---- 开始和停止 ----
@@ -981,26 +1035,102 @@ mod tests {
     #[test]
     fn auto_confirm_logs_in_directly_from_the_game_window() {
         let clock = Clock::new();
-        let mut session = start(game_window(), Box::new(AutoConfirmAll), &clock);
+        let mut session = start(game_window(), Box::new(AlwaysAutoConfirm), &clock);
         login_ticket(session.handle(frame(found_game(), &[VALID]), clock.at(1)));
         assert_eq!(session.status(), &ScanStatus::LoggingIn);
     }
 
+    fn live_room() -> SourceInfo {
+        SourceInfo::new(SourceKind::LiveStream, "B 站直播间 12345")
+    }
+
     #[test]
-    fn picked_windows_and_monitors_are_never_auto_confirmed() {
-        for source in [picked_window(), monitor()] {
+    fn auto_confirm_logs_in_from_every_source() {
+        for source in [game_window(), picked_window(), monitor(), live_room()] {
             let clock = Clock::new();
-            let mut session = start(source.clone(), Box::new(AutoConfirmAll), &clock);
-            asked(session.handle(frame(source, &[VALID]), clock.at(1)));
+            let mut session = start(source.clone(), Box::new(AlwaysAutoConfirm), &clock);
+            let seen = if source.kind == SourceKind::GameWindow {
+                found_game()
+            } else {
+                source.clone()
+            };
+            login_ticket(session.handle(frame(seen, &[VALID]), clock.at(1)));
+            assert_eq!(session.status(), &ScanStatus::LoggingIn, "{source:?}");
         }
     }
 
     #[test]
-    fn hard_rules_also_look_at_the_chosen_target() {
-        // 即使画面自称来自游戏窗口，你选的是指定窗口时也不能自动确认。
+    fn auto_confirm_still_refuses_several_codes_in_one_frame() {
         let clock = Clock::new();
-        let mut session = start(picked_window(), Box::new(AutoConfirmAll), &clock);
-        asked(session.handle(frame(found_game(), &[VALID]), clock.at(1)));
+        let mut session = start(live_room(), Box::new(AlwaysAutoConfirm), &clock);
+        assert_eq!(
+            session.handle(frame(live_room(), &[VALID, OTHER]), clock.at(1)),
+            None
+        );
+        assert_eq!(session.status().notice(), Some(&Notice::MultipleQrs));
+    }
+
+    #[test]
+    fn live_room_states_follow_the_stream() {
+        let clock = Clock::new();
+        let mut session = start(live_room(), Box::new(AlwaysAsk), &clock);
+        let room = "B 站直播间 12345".to_owned();
+        assert_eq!(
+            session.status(),
+            &ScanStatus::ConnectingLive { room: room.clone() }
+        );
+        session.handle(Event::Observed(Observation::LiveOffline), clock.at(1));
+        assert_eq!(
+            session.status(),
+            &ScanStatus::WaitingForLive { room: room.clone() }
+        );
+        assert_eq!(session.status().to_string(), "等待开播：B 站直播间 12345");
+        session.handle(Event::Observed(Observation::LiveConnecting), clock.at(2));
+        assert_eq!(session.status().to_string(), "正在连接 B 站直播间 12345…");
+        session.handle(frame(live_room(), &[]), clock.at(3));
+        assert!(matches!(session.status(), ScanStatus::Scanning { .. }));
+        assert_eq!(
+            session.handle(
+                Event::Observed(Observation::LiveFailed("找不到这个直播间".to_owned())),
+                clock.at(4)
+            ),
+            Some(Action::Finish)
+        );
+        assert_eq!(
+            stop_reason(&session),
+            Some(StopReason::LiveFailed {
+                message: "找不到这个直播间".to_owned()
+            })
+        );
+    }
+
+    #[test]
+    fn live_rooms_never_time_out() {
+        let clock = Clock::new();
+        let mut session = start(live_room(), Box::new(AlwaysAsk), &clock);
+        session.handle(frame(live_room(), &[]), clock.at(1));
+        assert_eq!(session.handle(Event::Tick, clock.at(100_000)), None);
+        assert!(matches!(session.status(), ScanStatus::Scanning { .. }));
+    }
+
+    #[test]
+    fn login_reports_how_long_it_took() {
+        let clock = Clock::new();
+        let mut session = start(live_room(), Box::new(AlwaysAutoConfirm), &clock);
+        login_ticket(session.handle(frame(live_room(), &[VALID]), clock.at(1)));
+        session.handle(Event::LoginFinished(Ok(())), clock.at(3));
+        let reason = stop_reason(&session).unwrap();
+        assert_eq!(
+            reason,
+            StopReason::LoggedIn {
+                game: "原神".to_owned(),
+                elapsed_ms: 2000
+            }
+        );
+        assert_eq!(
+            reason.to_string(),
+            "登录成功，显示二维码的原神已登录你的账号（从发现二维码到登录完成用了 2.00 秒）"
+        );
     }
 
     struct FakeSource(Vec<Result<Frame, CaptureError>>);
@@ -1037,6 +1167,9 @@ mod tests {
             Err(CaptureError::Gone),
             Err(CaptureError::Failed("拒绝访问".to_owned())),
             Err(CaptureError::InBackground),
+            Err(CaptureError::Offline),
+            Err(CaptureError::Connecting),
+            Err(CaptureError::LiveFailed("x".to_owned())),
         ]);
         assert_eq!(
             observe(&mut source, &FakeDecoder),
@@ -1062,6 +1195,15 @@ mod tests {
             observe(&mut source, &FakeDecoder),
             Observation::TargetInBackground
         );
+        assert_eq!(observe(&mut source, &FakeDecoder), Observation::LiveOffline);
+        assert_eq!(
+            observe(&mut source, &FakeDecoder),
+            Observation::LiveConnecting
+        );
+        assert_eq!(
+            observe(&mut source, &FakeDecoder),
+            Observation::LiveFailed("x".to_owned())
+        );
     }
 
     // ---- 登录结果 ----
@@ -1077,7 +1219,8 @@ mod tests {
         assert_eq!(
             stop_reason(&session),
             Some(StopReason::LoggedIn {
-                game: "原神".to_owned()
+                game: "原神".to_owned(),
+                elapsed_ms: 2000
             })
         );
     }
@@ -1152,7 +1295,8 @@ mod tests {
         assert_eq!(
             stop_reason(&session),
             Some(StopReason::LoggedIn {
-                game: "原神".to_owned()
+                game: "原神".to_owned(),
+                elapsed_ms: 3000
             })
         );
     }

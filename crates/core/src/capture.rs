@@ -22,6 +22,8 @@ pub enum SourceKind {
     PickedWindow,
     /// 整个显示器。
     Monitor,
+    /// 直播间（v0.3，设计文档第 6.5 节）。
+    LiveStream,
 }
 
 /// 画面来自哪里，用来告诉你二维码是在哪发现的。
@@ -57,6 +59,15 @@ pub enum CaptureError {
     Gone,
     #[error("截图失败：{0}")]
     Failed(String),
+    /// 直播间没开播。
+    #[error("直播间没开播")]
+    Offline,
+    /// 正在连接直播流：取地址、连接、等第一帧、断线重连。
+    #[error("正在连接直播流")]
+    Connecting,
+    /// 直播流彻底连不上，或者直播间不存在、不是 H.264、电脑没有 H.264 解码器。内容是原因。
+    #[error("{0}")]
+    LiveFailed(String),
 }
 
 /// 一帧帧地提供画面。

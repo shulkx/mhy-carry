@@ -328,13 +328,9 @@ mod tests {
         let ui = FakeUi::new(true, None);
         let (_stop, stop_signal) = mpsc::channel(1);
         let end = run_scan(&api, job(), &ui, stop_signal).await;
-        assert_eq!(
-            end,
-            ScanStatus::Idle {
-                last: Some(StopReason::LoggedIn {
-                    game: "原神".to_owned()
-                })
-            }
+        assert!(
+            matches!(&end, ScanStatus::Idle { last: Some(StopReason::LoggedIn { game, .. }) } if game == "原神"),
+            "{end:?}"
         );
         assert_eq!(ui.asked.load(Ordering::SeqCst), 1);
         assert_eq!(api.logins.load(Ordering::SeqCst), 1);
