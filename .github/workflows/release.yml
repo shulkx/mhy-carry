@@ -1,0 +1,106 @@
+name: Release
+
+# 推送 v* tag 时构建并发布（设计文档第 12 节）。
+# 手动运行（workflow_dispatch）只构建，文件作为构建产物上传，不生成构建来源证明，也不发布，
+# 用来在打 tag 之前试跑。
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    runs-on: windows-latest
+    permissions:
+      contents: read
+      id-token: write # 构建来源证明要用 OIDC 令牌
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install
+      # 发布构建不用 rust-cache，每次从干净的环境编译。
+      - run: cargo install tauri-cli --locked --version 2.12.0
+      - name: 核对 tag 和版本号
+        if: github.event_name == 'push'
+        shell: pwsh
+        run: |
+          $version = (Get-Content app/src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          if ("v$version" -ne $env:GITHUB_REF_NAME) {
+            throw "tag $env:GITHUB_REF_NAME 和 tauri.conf.json 里的版本 $version 不一致"
+          }
+      - name: 构建安装包和免安装 exe
+        working-directory: app
+        run: cargo tauri build --bundles nsis --ci
+      - name: 整理文件，生成 SHA256SUMS
+        shell: pwsh
+        run: |
+          $version = (Get-Content app/src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          New-Item -ItemType Directory dist | Out-Null
+          Copy-Item "target/release/bundle/nsis/MhyCarry_${version}_x64-setup.exe" dist/
+          Copy-Item target/release/mhy-carry.exe "dist/MhyCarry_${version}_x64-portable.exe"
+          $lines = Get-ChildItem dist -File | Sort-Object Name | ForEach-Object {
+            "{0}  {1}" -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower(), $_.Name
+          }
+          # 用 LF 换行，在 Linux、macOS 上也能直接用 sha256sum -c 核对。
+          [IO.File]::WriteAllText("$PWD/dist/SHA256SUMS", ($lines -join "`n") + "`n")
+          Get-Content dist/SHA256SUMS
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        if: github.event_name == 'push'
+        with:
+          subject-path: dist/*
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  # 发布单独一个 job：只有它能写仓库，构建步骤（包括依赖的编译脚本）拿不到写权限。
+  release:
+    needs: build
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: dist
+          path: dist
+      - name: 核对 SHA256SUMS
+        working-directory: dist
+        run: sha256sum -c SHA256SUMS
+      - name: 创建 Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          cat > notes.md <<EOF
+          ## 下载
+
+          - \`MhyCarry_${TAG#v}_x64-setup.exe\`：安装包，只为当前用户安装，不需要管理员权限。
+          - \`MhyCarry_${TAG#v}_x64-portable.exe\`：免安装版，下载后直接运行。
+
+          两种都需要系统里有 WebView2 运行时：Windows 11 自带，Windows 10 一般也已经装好；缺少时，安装包会自动下载安装。
+
+          ## 核对文件
+
+          这些文件由 GitHub Actions 从本仓库 \`${TAG}\` 的源码构建。用 GitHub CLI 核对构建来源：
+
+              gh attestation verify <下载的文件> -R ${GITHUB_REPOSITORY}
+
+          也可以对照 \`SHA256SUMS\` 里的哈希值。程序没有代码签名，Windows SmartScreen 提示“未知发布者”是正常的。
+
+          使用方法和注意事项见 [README](https://github.com/${GITHUB_REPOSITORY}#readme)。
+          EOF
+          # 仓库开启了不可变发布：先建草稿、传完文件，再正式发布。
+          gh release create "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --draft --verify-tag \
+            --title "MhyCarry $TAG" --notes-file notes.md
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false
