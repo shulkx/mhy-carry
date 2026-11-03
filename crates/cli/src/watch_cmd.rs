@@ -13,7 +13,7 @@ use mhy_carry_core::scan::{Notice, Prompt, ScanStatus};
 use mhy_carry_core::settings::TargetKind;
 use mhy_carry_core::store::{AccountStore, JsonFileStore};
 use mhy_carry_core::video::H264Decoder;
-use mhy_carry_live::LiveSource;
+use mhy_carry_live::{LiveClient, LiveSource};
 use mhy_carry_platform::capture::{
     GameWindowSource, MonitorSource, PickedWindowSource, list_monitors, list_windows,
 };
@@ -60,7 +60,12 @@ pub async fn run(
     let account = file.remove(&id).expect("刚找到的账号");
     let label = account.describe();
     let room = room.unwrap_or_else(|| ctx.settings.scan.live_room.clone());
-    let source = choose_source(target.unwrap_or(ctx.settings.scan.default_target), &room)?;
+    let target = target.unwrap_or(ctx.settings.scan.default_target);
+    let anchor = match target {
+        TargetKind::Live => describe_room(&room).await,
+        _ => None,
+    };
+    let source = choose_source(target, &room, anchor.as_deref())?;
     println!("用{label}扫描，按 Ctrl+C 结束。");
     if auto_confirm {
         println!("自动确认已开启：发现原神登录码会直接登录，不再问你。");
@@ -128,12 +133,13 @@ impl ScanUi for TerminalUi<'_> {
 fn choose_source(
     target: TargetKind,
     room: &str,
+    anchor: Option<&str>,
 ) -> Result<Box<dyn FrameSource + Send>, Box<dyn Error>> {
     Ok(match target {
         TargetKind::Auto => Box::new(GameWindowSource::new(GAMES)),
         TargetKind::Live => {
             let room = parse_room(room)?;
-            Box::new(LiveSource::start(room, None, Box::new(system_decoder))?)
+            Box::new(LiveSource::start(room, anchor, Box::new(system_decoder))?)
         }
         TargetKind::Window => {
             let windows = list_windows()?;
@@ -238,6 +244,35 @@ impl Printer {
 
 fn now_hms() -> String {
     jiff::Zoned::now().strftime("%H:%M:%S").to_string()
+}
+
+/// 开始前查一下直播间的主播信息，让你确认填对了（设计文档第 6.5 节“确认直播间”）。
+/// 返回主播名；查不到时打印原因，照常扫描。认不出的输入留给 `choose_source` 报错。
+async fn describe_room(room: &str) -> Option<String> {
+    let live = parse_room(room).ok()?;
+    let looked = match LiveClient::new() {
+        Ok(client) => client.lookup_room(&live).await,
+        Err(error) => Err(error),
+    };
+    match looked {
+        Ok(info) => {
+            let status = if info.live { "直播中" } else { "未开播" };
+            let area = if info.area.is_empty() {
+                String::new()
+            } else {
+                format!(" · {}", info.area)
+            };
+            println!("{live}：主播 {} · {status}{area}", info.anchor);
+            if !info.title.is_empty() {
+                println!("  {}", info.title);
+            }
+            Some(info.anchor)
+        }
+        Err(error) => {
+            println!("查不到主播信息：{error}");
+            None
+        }
+    }
 }
 
 /// 在拉流线程里创建系统 H.264 解码器。
