@@ -10,6 +10,10 @@ all-features = true
 ignore = [
     # 只在 Linux 上由 Tauri 经 GTK 绑定（glib-macros）引入，Windows 上不编译它。v1 只发布 Windows 版。
     { id = "RUSTSEC-2024-0370", reason = "只在 Linux 上由 Tauri 的 GTK 绑定引入，v1 只发布 Windows 版" },
+    # 下面三个只在 Linux 上由截图库 xcap 经 zbus 引入，Windows 上不编译它们。已经并进 zbus 6，等 xcap 升级。
+    { id = "RUSTSEC-2026-0370", reason = "zvariant：只在 Linux 上由 xcap 引入，v1 只发布 Windows 版" },
+    { id = "RUSTSEC-2026-0371", reason = "zbus_names：只在 Linux 上由 xcap 引入，v1 只发布 Windows 版" },
+    { id = "RUSTSEC-2026-0372", reason = "zvariant_derive：只在 Linux 上由 xcap 引入，v1 只发布 Windows 版" },
 ]
 
 [licenses]
