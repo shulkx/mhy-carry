@@ -11,6 +11,17 @@ pub enum LiveRoom {
     Bilibili { id: u64 },
 }
 
+impl LiveRoom {
+    /// 直播间的名称，查到主播名时带上，比如“B 站直播间 12345（憨憨的小喵i）”
+    /// （设计文档第 6.5 节“确认直播间”）。`anchor` 要先用 `text::clip` 清理过。
+    pub fn label(&self, anchor: Option<&str>) -> String {
+        match anchor {
+            Some(anchor) if !anchor.is_empty() => format!("{self}（{anchor}）"),
+            _ => self.to_string(),
+        }
+    }
+}
+
 impl fmt::Display for LiveRoom {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -123,5 +134,15 @@ mod tests {
     #[test]
     fn rooms_are_named_by_platform_and_number() {
         assert_eq!(ROOM.to_string(), "B 站直播间 12345");
+    }
+
+    #[test]
+    fn labels_carry_the_anchor_when_known() {
+        assert_eq!(
+            ROOM.label(Some("憨憨的小喵i")),
+            "B 站直播间 12345（憨憨的小喵i）"
+        );
+        assert_eq!(ROOM.label(Some("")), "B 站直播间 12345");
+        assert_eq!(ROOM.label(None), "B 站直播间 12345");
     }
 }

@@ -19,6 +19,16 @@ pub fn printable(text: &str) -> String {
         .to_owned()
 }
 
+/// 清理外部文本（同 [`printable`]），超过 `max` 个字时截断并加“…”。
+pub fn clip(text: &str, max: usize) -> String {
+    let cleaned = printable(text);
+    if cleaned.chars().count() <= max {
+        return cleaned;
+    }
+    let kept: String = cleaned.chars().take(max.saturating_sub(1)).collect();
+    format!("{}…", kept.trim_end())
+}
+
 /// 双向文本控制符、零宽字符、行分隔符、软连字符、BOM 等看不见的格式字符。
 fn is_invisible_format(c: char) -> bool {
     matches!(
@@ -61,5 +71,13 @@ mod tests {
             printable("某直播间 - Google Chrome（chrome.exe）"),
             "某直播间 - Google Chrome（chrome.exe）"
         );
+    }
+
+    #[test]
+    fn clip_cleans_and_shortens() {
+        assert_eq!(clip(" 憨憨的\r小喵i ", 32), "憨憨的 小喵i");
+        assert_eq!(clip("一二三四五六", 6), "一二三四五六");
+        assert_eq!(clip("一二三四五六七", 6), "一二三四五…");
+        assert_eq!(clip("", 6), "");
     }
 }
