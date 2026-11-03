@@ -293,6 +293,64 @@ function renderBind(box, bind) {
   box.append(actions);
 }
 
+// ---- 直播间信息（设计文档第 6.5 节“确认直播间”） ----
+
+// 最近一次查询的结果：empty | loading | ok | error。
+let roomInfo = { kind: "empty" };
+// 最近一次查询的序号和输入。回来的结果不是最近一次的就丢掉。
+let roomQuery = 0;
+let roomQueried = null;
+let roomTimer = null;
+
+// 输入一改，旧的结果就作废：马上显示“正在查询”，停止输入 0.5 秒后再查。
+function roomInputChanged() {
+  clearTimeout(roomTimer);
+  roomQuery++;
+  roomQueried = null;
+  roomInfo = $("live-room").value.trim() ? { kind: "loading" } : { kind: "empty" };
+  renderRoomInfo();
+  roomTimer = setTimeout(lookupRoom, 500);
+}
+
+async function lookupRoom() {
+  clearTimeout(roomTimer);
+  const text = $("live-room").value.trim();
+  // 同一个输入已经查到或正在查，就不再查；上次出错的可以再查。
+  if (text === roomQueried && (roomInfo.kind === "ok" || roomInfo.kind === "loading")) return;
+  roomQueried = text;
+  const seq = ++roomQuery;
+  roomInfo = text ? { kind: "loading" } : { kind: "empty" };
+  renderRoomInfo();
+  if (!text) return;
+  let next;
+  try {
+    next = { kind: "ok", info: await invoke("lookup_room", { room: text }) };
+  } catch (error) {
+    next = { kind: "error", message: String(error) };
+  }
+  if (seq !== roomQuery) return;
+  roomInfo = next;
+  renderRoomInfo();
+}
+
+function renderRoomInfo() {
+  const box = $("room-info");
+  box.hidden = currentTarget() !== "live" || roomInfo.kind === "empty";
+  box.classList.toggle("bad", roomInfo.kind === "error");
+  let first = "";
+  let second = "";
+  if (roomInfo.kind === "loading") first = "正在查询直播间…";
+  if (roomInfo.kind === "error") first = roomInfo.message;
+  if (roomInfo.kind === "ok") {
+    const info = roomInfo.info;
+    first = ["主播：" + info.anchor, info.live ? "直播中" : "未开播", info.area].filter(Boolean).join(" · ");
+    second = info.title;
+  }
+  $("room-anchor").textContent = first;
+  $("room-title").textContent = second;
+  $("room-title").hidden = !second;
+}
+
 // ---- 扫描 ----
 
 function dotClass(scan) {
@@ -369,6 +427,7 @@ function renderScan() {
   } else if (idle && state.accounts.kind !== "list") {
     notice.textContent = "绑定账号后才能开始扫描。";
   }
+  renderRoomInfo();
 }
 
 // ---- 设置和页脚 ----
@@ -412,6 +471,7 @@ for (const name of TARGETS) {
     target = name;
     renderScan();
     loadTargets(name);
+    if (name === "live") lookupRoom();
   });
 }
 $("target-refresh").addEventListener("click", () => loadTargets(currentTarget()));
@@ -427,6 +487,7 @@ $("scan-button").addEventListener("click", () => {
 });
 $("live-room").addEventListener("input", () => {
   $("live-room").dataset.edited = "1";
+  roomInputChanged();
 });
 // 在输入框里按回车直接开始扫描。
 $("live-room").addEventListener("keydown", (event) => {
@@ -468,6 +529,7 @@ async function main() {
   await listen("state-changed", (event) => render(event.payload));
   render(await invoke("get_state"));
   loadTargets(currentTarget());
+  if (currentTarget() === "live") lookupRoom();
 }
 
 main().catch(showError);

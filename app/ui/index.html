@@ -33,6 +33,10 @@
     <div class="target-pick" id="live-pick" hidden>
       <input type="text" id="live-room" aria-label="直播间网址或房间号" placeholder="B 站直播间网址或房间号" autocomplete="off" spellcheck="false">
     </div>
+    <div class="room-info" id="room-info" aria-live="polite" hidden>
+      <div class="room-anchor" id="room-anchor"></div>
+      <div class="room-title" id="room-title"></div>
+    </div>
     <div class="start-row">
       <button type="button" class="btn primary big" id="scan-button">开始扫描</button>
       <label class="auto-confirm" title="识别到原神登录码直接登录，不再问你">

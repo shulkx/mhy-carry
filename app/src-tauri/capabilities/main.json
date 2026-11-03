@@ -16,6 +16,7 @@
     "allow-scan-start",
     "allow-scan-stop",
     "allow-update-settings",
-    "allow-set-auto-confirm"
+    "allow-set-auto-confirm",
+    "allow-lookup-room"
   ]
 }

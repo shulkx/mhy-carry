@@ -7,11 +7,11 @@ use mhy_carry_core::account::{Account, normalize_note};
 use mhy_carry_core::capture::FrameSource;
 use mhy_carry_core::decode::RxingDecoder;
 use mhy_carry_core::games::GAMES;
-use mhy_carry_core::room::parse_room;
+use mhy_carry_core::room::{LiveRoom, parse_room};
 use mhy_carry_core::settings::TargetKind;
 use mhy_carry_core::store::AccountStore;
 use mhy_carry_core::video::H264Decoder;
-use mhy_carry_live::LiveSource;
+use mhy_carry_live::{LiveClient, LiveError, LiveSource, RoomInfo};
 use mhy_carry_platform::capture::{
     GameWindowSource, MonitorSource, PickedWindowSource, list_monitors, list_windows,
 };
@@ -273,11 +273,17 @@ pub async fn scan_start(
             model.settings.scan.auto_confirm,
         )
     };
+    // 开始扫描直播间时自己再查一次主播名，带进直播间的名称；查不到就不带（第 6.5 节）。
+    let anchor = match (target, room.as_deref().map(parse_room)) {
+        (TargetKind::Live, Some(Ok(live))) => look_up(&live).await.ok().map(|info| info.anchor),
+        _ => None,
+    };
     let job = prepare_job(
         &app,
         target,
         id,
         room.as_deref(),
+        anchor.as_deref(),
         idle_timeout,
         active.as_deref(),
     );
@@ -300,6 +306,7 @@ fn prepare_job(
     target: TargetKind,
     id: Option<u32>,
     room: Option<&str>,
+    anchor: Option<&str>,
     idle_timeout: Duration,
     active: Option<&str>,
 ) -> CommandResult<(ScanJob, String)> {
@@ -315,7 +322,7 @@ fn prepare_job(
         TargetKind::Live => {
             let room = parse_room(room.unwrap_or_default()).map_err(|error| error.to_string())?;
             Box::new(
-                LiveSource::start(room, None, Box::new(system_decoder))
+                LiveSource::start(room, anchor, Box::new(system_decoder))
                     .map_err(|error| error.to_string())?,
             )
         }
@@ -349,6 +356,40 @@ fn prepare_job(
         auto_confirm: false,
     };
     Ok((job, account_id))
+}
+
+/// 直播间的主播信息，给界面显示（设计文档第 6.5 节“确认直播间”）。
+#[derive(Debug, Serialize)]
+pub struct RoomView {
+    pub anchor: String,
+    pub live: bool,
+    pub area: String,
+    pub title: String,
+}
+
+/// 查直播间的主播信息，让你确认填对了直播间。返回的错误直接显示在输入框下面。
+#[tauri::command]
+pub async fn lookup_room(room: String) -> CommandResult<RoomView> {
+    let room = parse_room(&room).map_err(|error| error.to_string())?;
+    let RoomInfo {
+        anchor,
+        live,
+        area,
+        title,
+    } = look_up(&room).await.map_err(|error| match error {
+        LiveError::RoomNotFound => error.to_string(),
+        other => format!("查不到主播信息：{other}"),
+    })?;
+    Ok(RoomView {
+        anchor,
+        live,
+        area,
+        title,
+    })
+}
+
+async fn look_up(room: &LiveRoom) -> Result<RoomInfo, LiveError> {
+    LiveClient::new()?.lookup_room(room).await
 }
 
 /// 在拉流线程里创建系统 H.264 解码器。

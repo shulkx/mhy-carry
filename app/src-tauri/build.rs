@@ -14,6 +14,7 @@ fn main() {
         "scan_stop",
         "update_settings",
         "set_auto_confirm",
+        "lookup_room",
     ]);
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(manifest))
         .expect("tauri-build 失败");

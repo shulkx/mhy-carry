@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-lookup-room"
+description = "Enables the lookup_room command without any pre-configured scope."
+commands.allow = ["lookup_room"]
+
+[[permission]]
+identifier = "deny-lookup-room"
+description = "Denies the lookup_room command without any pre-configured scope."
+commands.deny = ["lookup_room"]
