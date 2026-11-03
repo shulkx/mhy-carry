@@ -8,4 +8,5 @@ mod platforms;
 mod source;
 
 pub use client::{LiveClient, LiveError};
+pub use platforms::RoomInfo;
 pub use source::{DecoderFactory, LiveSource};

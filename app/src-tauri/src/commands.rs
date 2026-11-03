@@ -315,7 +315,7 @@ fn prepare_job(
         TargetKind::Live => {
             let room = parse_room(room.unwrap_or_default()).map_err(|error| error.to_string())?;
             Box::new(
-                LiveSource::start(room, Box::new(system_decoder))
+                LiveSource::start(room, None, Box::new(system_decoder))
                     .map_err(|error| error.to_string())?,
             )
         }

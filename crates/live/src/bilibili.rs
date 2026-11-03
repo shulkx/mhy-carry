@@ -1,15 +1,21 @@
-//! B 站直播间取流（设计文档第 6.5 节；核对来源见第 16 节）。不需要签名，也不带 Cookie。
+//! B 站直播间取流和主播信息（设计文档第 6.5 节；核对来源见第 16 节）。不需要签名，也不带 Cookie。
 
+use mhy_carry_core::text::clip;
 use serde_json::Value;
 use url::Url;
 
 use crate::client::{LiveClient, LiveError};
-use crate::platforms::StreamStatus;
+use crate::platforms::{RoomInfo, StreamStatus};
 
 /// 接口只能访问这个域名（设计文档第 9 节）。
 const API_HOST: &str = "api.live.bilibili.com";
 /// room_init 对不存在的房间返回的错误码（2026-10-15 实测）。其他错误码可能是临时的，会重试。
 const ROOM_NOT_FOUND: i64 = 60004;
+/// getH5InfoByRoom 对不存在的房间返回的错误码（2026-11-04 实测）。
+const INFO_NOT_FOUND: i64 = 19002000;
+/// 主播名、分区和标题最多保留多少个字（设计文档第 6.5 节）。
+const MAX_ANCHOR: usize = 32;
+const MAX_TEXT: usize = 64;
 const REFERER: &str = "https://live.bilibili.com/";
 
 pub(crate) struct Bilibili {
@@ -50,12 +56,7 @@ impl Bilibili {
         match init["code"].as_i64() {
             Some(0) => {}
             Some(ROOM_NOT_FOUND) => return Err(LiveError::RoomNotFound),
-            code => {
-                return Err(LiveError::Other(format!(
-                    "B 站直播接口返回错误码 {}",
-                    code.map_or("（无）".to_owned(), |code| code.to_string())
-                )));
-            }
+            code => return Err(error_code(code)),
         }
         let real_id = init["data"]["room_id"]
             .as_u64()
@@ -100,6 +101,56 @@ impl Bilibili {
             referer: REFERER,
         })
     }
+}
+
+impl Bilibili {
+    /// 查主播名、是否在播、分区和标题（设计文档第 6.5 节“确认直播间”）。
+    /// `room` 是你输入的房间号，短号也行。
+    pub async fn lookup(&self, client: &LiveClient, room: u64) -> Result<RoomInfo, LiveError> {
+        let room = room.to_string();
+        let info = client
+            .get_json(
+                self.url(
+                    "/xlive/web-room/v1/index/getH5InfoByRoom",
+                    &[("room_id", &room)],
+                ),
+                &[API_HOST],
+                REFERER,
+            )
+            .await?;
+        match info["code"].as_i64() {
+            Some(0) => {}
+            Some(INFO_NOT_FOUND) => return Err(LiveError::RoomNotFound),
+            code => return Err(error_code(code)),
+        }
+        let data = &info["data"];
+        let anchor = clip(
+            data["anchor_info"]["base_info"]["uname"]
+                .as_str()
+                .unwrap_or_default(),
+            MAX_ANCHOR,
+        );
+        if anchor.is_empty() {
+            return Err(LiveError::Format(
+                "getH5InfoByRoom 的返回里没有主播名".to_owned(),
+            ));
+        }
+        let text = |value: &Value| clip(value.as_str().unwrap_or_default(), MAX_TEXT);
+        Ok(RoomInfo {
+            anchor,
+            live: data["room_info"]["live_status"].as_i64() == Some(1),
+            area: text(&data["room_info"]["area_name"]),
+            title: text(&data["room_info"]["title"]),
+        })
+    }
+}
+
+/// 接口返回的其他错误码：可能是风控之类的临时错误，可以重试。
+fn error_code(code: Option<i64>) -> LiveError {
+    LiveError::Other(format!(
+        "B 站直播接口返回错误码 {}",
+        code.map_or("（无）".to_owned(), |code| code.to_string())
+    ))
 }
 
 /// 挑出 HTTP-FLV、H.264 的地址：`host + base_url + extra`，每个 CDN 一个。
@@ -262,6 +313,95 @@ pub(crate) mod tests {
             matches!(&result, Err(LiveError::Other(message)) if message == "B 站直播接口返回错误码 -412"),
             "{result:?}"
         );
+    }
+
+    fn h5_info(body: serde_json::Value) -> ResponseTemplate {
+        ResponseTemplate::new(200).set_body_json(body)
+    }
+
+    async fn lookup(server: &MockServer) -> Result<RoomInfo, LiveError> {
+        Bilibili::at(&server.uri())
+            .lookup(&LiveClient::for_tests(), 12345)
+            .await
+    }
+
+    #[tokio::test]
+    async fn looks_up_the_anchor_status_area_and_title() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/xlive/web-room/v1/index/getH5InfoByRoom"))
+            .and(query_param("room_id", "12345"))
+            .and(header("referer", REFERER))
+            .respond_with(h5_info(json!({
+                "code": 0,
+                "data": {
+                    "room_info": {
+                        "room_id": 32155676,
+                        "live_status": 1,
+                        "area_name": "原神",
+                        "title": format!("深渊{}速打", char::from(7)),
+                    },
+                    "anchor_info": {"base_info": {"uname": " 憨憨的小喵i "}}
+                }
+            })))
+            .mount(&server)
+            .await;
+        assert_eq!(
+            lookup(&server).await.unwrap(),
+            RoomInfo {
+                anchor: "憨憨的小喵i".to_owned(),
+                live: true,
+                area: "原神".to_owned(),
+                title: "深渊 速打".to_owned(),
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn long_texts_are_clipped_and_offline_rooms_say_so() {
+        let server = MockServer::start().await;
+        Mock::given(path("/xlive/web-room/v1/index/getH5InfoByRoom"))
+            .respond_with(h5_info(json!({
+                "code": 0,
+                "data": {
+                    "room_info": {"live_status": 2, "title": "长".repeat(100)},
+                    "anchor_info": {"base_info": {"uname": "名".repeat(40)}}
+                }
+            })))
+            .mount(&server)
+            .await;
+        let info = lookup(&server).await.unwrap();
+        assert!(!info.live);
+        assert_eq!(info.area, "");
+        assert_eq!(info.anchor.chars().count(), 32);
+        assert_eq!(info.title.chars().count(), 64);
+        assert!(info.title.ends_with('…'));
+    }
+
+    #[tokio::test]
+    async fn lookup_reports_missing_rooms_and_other_codes() {
+        for (code, expected) in [
+            (19002000, "找不到这个直播间"),
+            (-352, "B 站直播接口返回错误码 -352"),
+        ] {
+            let server = MockServer::start().await;
+            Mock::given(path("/xlive/web-room/v1/index/getH5InfoByRoom"))
+                .respond_with(h5_info(json!({"code": code, "message": "x", "data": null})))
+                .mount(&server)
+                .await;
+            let error = lookup(&server).await.unwrap_err();
+            assert_eq!(error.to_string(), expected);
+        }
+    }
+
+    #[tokio::test]
+    async fn lookup_without_an_anchor_name_is_a_format_error() {
+        let server = MockServer::start().await;
+        Mock::given(path("/xlive/web-room/v1/index/getH5InfoByRoom"))
+            .respond_with(h5_info(json!({"code": 0, "data": {"room_info": {}}})))
+            .mount(&server)
+            .await;
+        assert!(matches!(lookup(&server).await, Err(LiveError::Format(_))));
     }
 
     #[tokio::test]

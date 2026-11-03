@@ -133,7 +133,7 @@ fn choose_source(
         TargetKind::Auto => Box::new(GameWindowSource::new(GAMES)),
         TargetKind::Live => {
             let room = parse_room(room)?;
-            Box::new(LiveSource::start(room, Box::new(system_decoder))?)
+            Box::new(LiveSource::start(room, None, Box::new(system_decoder))?)
         }
         TargetKind::Window => {
             let windows = list_windows()?;

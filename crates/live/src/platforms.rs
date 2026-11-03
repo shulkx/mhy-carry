@@ -17,6 +17,19 @@ pub(crate) enum StreamStatus {
     Offline,
 }
 
+/// 直播间的主播信息（设计文档第 6.5 节“确认直播间”）。都已经清理、截断过。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RoomInfo {
+    /// 主播名，不为空。
+    pub anchor: String,
+    /// 直播中。
+    pub live: bool,
+    /// 分区，比如“原神”。可能为空。
+    pub area: String,
+    /// 直播间标题。可能为空。
+    pub title: String,
+}
+
 /// 各平台的接口地址。测试时指到本地假服务器。
 pub(crate) struct Platforms {
     pub bilibili: Bilibili,
@@ -36,6 +49,16 @@ impl Platforms {
     ) -> Result<StreamStatus, LiveError> {
         match room {
             LiveRoom::Bilibili { id } => self.bilibili.resolve(client, *id).await,
+        }
+    }
+
+    pub async fn lookup(
+        &self,
+        client: &LiveClient,
+        room: &LiveRoom,
+    ) -> Result<RoomInfo, LiveError> {
+        match room {
+            LiveRoom::Bilibili { id } => self.bilibili.lookup(client, *id).await,
         }
     }
 }

@@ -126,9 +126,16 @@ pub struct LiveSource {
 
 impl LiveSource {
     /// 开始拉这个直播间的流。马上返回；取流、连接都在后台线程里做。
-    pub fn start(room: LiveRoom, decoder: DecoderFactory) -> Result<Self, LiveError> {
+    /// `anchor` 是查到的主播名（已经清理过），会带进直播间的名称。
+    pub fn start(
+        room: LiveRoom,
+        anchor: Option<&str>,
+        decoder: DecoderFactory,
+    ) -> Result<Self, LiveError> {
+        let label = room.label(anchor);
         Self::start_with(
             room,
+            label,
             decoder,
             LiveClient::new()?,
             Platforms::official(),
@@ -138,12 +145,13 @@ impl LiveSource {
 
     pub(crate) fn start_with(
         room: LiveRoom,
+        label: String,
         decoder: DecoderFactory,
         client: LiveClient,
         platforms: Platforms,
         timing: Timing,
     ) -> Result<Self, LiveError> {
-        let info = SourceInfo::new(SourceKind::LiveStream, &room.to_string());
+        let info = SourceInfo::new(SourceKind::LiveStream, &label);
         let shared = Arc::new(Shared {
             slot: Mutex::new(Slot {
                 state: State::Connecting,
@@ -444,6 +452,7 @@ mod tests {
     fn start_with(server: &MockServer, decoder: DecoderFactory, timing: Timing) -> LiveSource {
         LiveSource::start_with(
             LiveRoom::Bilibili { id: 12345 },
+            "B 站直播间 12345".to_owned(),
             decoder,
             LiveClient::for_tests(),
             Platforms {
@@ -675,7 +684,7 @@ mod tests {
             MfH264Decoder::new().map(|decoder| Box::new(decoder) as Box<dyn H264Decoder>)
         });
         let started = Instant::now();
-        let mut source = LiveSource::start(LiveRoom::Bilibili { id }, decoder).unwrap();
+        let mut source = LiveSource::start(LiveRoom::Bilibili { id }, None, decoder).unwrap();
         let mut first = None;
         let mut scanned = 0;
         let mut size = (0, 0);
@@ -702,5 +711,22 @@ mod tests {
             size.1
         );
         assert!(scanned > 10, "{scanned}");
+    }
+
+    /// 联网测试：查一个公开直播间的主播信息。用法同上。
+    #[tokio::test]
+    #[ignore = "需要联网，并用 MHY_CARRY_LIVE_ROOM 指定一个直播间"]
+    async fn looks_up_a_real_bilibili_room() {
+        let id = std::env::var("MHY_CARRY_LIVE_ROOM")
+            .expect("用 MHY_CARRY_LIVE_ROOM 指定房间号")
+            .parse()
+            .expect("房间号是数字");
+        let info = LiveClient::new()
+            .unwrap()
+            .lookup_room(&LiveRoom::Bilibili { id })
+            .await
+            .unwrap();
+        println!("{info:?}");
+        assert!(!info.anchor.is_empty());
     }
 }

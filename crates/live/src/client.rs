@@ -4,12 +4,17 @@
 
 use std::time::Duration;
 
+use mhy_carry_core::room::LiveRoom;
 use reqwest::header::{HeaderValue, REFERER};
 use url::Url;
+
+use crate::platforms::{Platforms, RoomInfo};
 
 /// 浏览器的 User-Agent。平台接口可能拒绝没有 User-Agent 的请求。
 const USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36";
 const API_TIMEOUT: Duration = Duration::from_secs(10);
+/// 查直播间信息最多等这么久。开始扫描时也要查，不能拖慢开始（设计文档第 6.5 节）。
+const LOOKUP_LIMIT: Duration = Duration::from_secs(3);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Debug, thiserror::Error)]
@@ -75,6 +80,18 @@ impl LiveClient {
             stream,
             allow_local,
         })
+    }
+
+    /// 查直播间的主播名、是否在播、分区和标题（设计文档第 6.5 节“确认直播间”）。
+    pub async fn lookup_room(&self, room: &LiveRoom) -> Result<RoomInfo, LiveError> {
+        tokio::time::timeout(LOOKUP_LIMIT, Platforms::official().lookup(self, room))
+            .await
+            .unwrap_or_else(|_| {
+                Err(LiveError::Other(format!(
+                    "直播平台 {} 秒内没有回应",
+                    LOOKUP_LIMIT.as_secs()
+                )))
+            })
     }
 
     /// 调平台接口，返回 JSON。`hosts` 是这个平台允许访问的接口域名。
