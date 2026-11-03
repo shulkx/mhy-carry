@@ -25,6 +25,9 @@ pub fn clip(text: &str, max: usize) -> String {
     if cleaned.chars().count() <= max {
         return cleaned;
     }
+    if max == 0 {
+        return String::new();
+    }
     let kept: String = cleaned.chars().take(max.saturating_sub(1)).collect();
     format!("{}…", kept.trim_end())
 }
@@ -79,5 +82,7 @@ mod tests {
         assert_eq!(clip("一二三四五六", 6), "一二三四五六");
         assert_eq!(clip("一二三四五六七", 6), "一二三四五…");
         assert_eq!(clip("", 6), "");
+        assert_eq!(clip("一二", 1), "…");
+        assert_eq!(clip("一二", 0), "");
     }
 }

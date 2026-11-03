@@ -301,6 +301,12 @@ let roomInfo = { kind: "empty" };
 let roomQuery = 0;
 let roomQueried = null;
 let roomTimer = null;
+// 上一次画面上的截图目标和是否空闲：切到直播间、或者一次扫描刚结束时，重新查一次，
+// 因为主播可能刚开播或下播（第 6.5 节）。
+let shownTarget = null;
+let wasIdle = true;
+// 点了“开始扫描”、后端还没回应（直播间要先查主播名，最多 3 秒）。这期间不能改目标和输入。
+let starting = false;
 
 // 输入一改，旧的结果就作废：马上显示“正在查询”，停止输入 0.5 秒后再查。
 function roomInputChanged() {
@@ -315,8 +321,8 @@ function roomInputChanged() {
 async function lookupRoom() {
   clearTimeout(roomTimer);
   const text = $("live-room").value.trim();
-  // 同一个输入已经查到或正在查，就不再查；上次出错的可以再查。
-  if (text === roomQueried && (roomInfo.kind === "ok" || roomInfo.kind === "loading")) return;
+  // 同一个输入正在查，就不再查。
+  if (text === roomQueried && roomInfo.kind === "loading") return;
   roomQueried = text;
   const seq = ++roomQuery;
   roomInfo = text ? { kind: "loading" } : { kind: "empty" };
@@ -385,29 +391,37 @@ function fillTargets(keep) {
 function renderScan() {
   const scan = state.scan;
   const idle = scan.kind === "idle";
+  // 空闲、并且不在“正在开始”时，才能改目标、输入和自动确认。
+  const editable = idle && !starting;
   const chosen = currentTarget();
   for (const name of TARGETS) {
     const node = $("target-" + name);
     node.setAttribute("aria-pressed", String(name === chosen));
-    node.disabled = !idle;
+    node.disabled = !editable;
   }
   $("target-pick").hidden = chosen !== "window" && chosen !== "monitor";
-  $("target-select").disabled = !idle;
-  $("target-refresh").disabled = !idle;
+  $("target-select").disabled = !editable;
+  $("target-refresh").disabled = !editable;
   const room = $("live-room");
   $("live-pick").hidden = chosen !== "live";
-  room.disabled = !idle;
+  room.disabled = !editable;
   // 没改过的时候填上次的直播间。
   if (document.activeElement !== room && room.dataset.edited !== "1") room.value = state.settings.live_room;
   // 自动确认记在设置里，扫描中不能改（设计文档第 6.3 节）。
   const auto = $("auto-confirm");
   auto.checked = state.settings.auto_confirm;
-  auto.disabled = !idle;
+  auto.disabled = !editable;
   $("auto-warning").hidden = !state.settings.auto_confirm;
+  if (chosen === "live" && (shownTarget !== "live" || (idle && !wasIdle))) lookupRoom();
+  shownTarget = chosen;
+  wasIdle = idle;
 
   const start = $("scan-button");
   const active = activeAccount();
-  if (idle) {
+  if (idle && starting) {
+    start.textContent = "正在开始…";
+    start.disabled = true;
+  } else if (idle) {
     // 大按钮写着扫描用的账号（设计文档第 6.3 节）。
     const ready = active && active.credential !== "invalid" && !BUSY_BIND.includes(state.bind.kind);
     start.textContent = active ? "开始扫描（" + active.name + "）" : "开始扫描";
@@ -471,19 +485,25 @@ for (const name of TARGETS) {
     target = name;
     renderScan();
     loadTargets(name);
-    if (name === "live") lookupRoom();
   });
 }
 $("target-refresh").addEventListener("click", () => loadTargets(currentTarget()));
-$("scan-button").addEventListener("click", () => {
+$("scan-button").addEventListener("click", async () => {
   if (state.scan.kind !== "idle") {
     call("scan_stop");
     return;
   }
+  if (starting) return;
   const chosen = currentTarget();
   const id = chosen === "window" || chosen === "monitor" ? Number($("target-select").value) || null : null;
   const room = chosen === "live" ? $("live-room").value : null;
-  call("scan_start", { target: chosen, id, room });
+  // 刚改了输入、还在等防抖的，现在就查，不等到扫描开始以后。
+  if (chosen === "live" && roomQueried !== room.trim()) lookupRoom();
+  starting = true;
+  renderScan();
+  await call("scan_start", { target: chosen, id, room });
+  starting = false;
+  renderScan();
 });
 $("live-room").addEventListener("input", () => {
   $("live-room").dataset.edited = "1";
@@ -529,7 +549,6 @@ async function main() {
   await listen("state-changed", (event) => render(event.payload));
   render(await invoke("get_state"));
   loadTargets(currentTarget());
-  if (currentTarget() === "live") lookupRoom();
 }
 
 main().catch(showError);

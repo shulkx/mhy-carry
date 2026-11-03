@@ -364,7 +364,7 @@ pub(crate) mod tests {
             .respond_with(h5_info(json!({
                 "code": 0,
                 "data": {
-                    "room_info": {"live_status": 2, "title": "长".repeat(100)},
+                    "room_info": {"live_status": 2, "area_name": "区".repeat(70), "title": "长".repeat(100)},
                     "anchor_info": {"base_info": {"uname": "名".repeat(40)}}
                 }
             })))
@@ -372,7 +372,7 @@ pub(crate) mod tests {
             .await;
         let info = lookup(&server).await.unwrap();
         assert!(!info.live);
-        assert_eq!(info.area, "");
+        assert_eq!(info.area.chars().count(), 64);
         assert_eq!(info.anchor.chars().count(), 32);
         assert_eq!(info.title.chars().count(), 64);
         assert!(info.title.ends_with('…'));

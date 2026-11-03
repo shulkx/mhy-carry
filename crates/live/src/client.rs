@@ -84,12 +84,22 @@ impl LiveClient {
 
     /// 查直播间的主播名、是否在播、分区和标题（设计文档第 6.5 节“确认直播间”）。
     pub async fn lookup_room(&self, room: &LiveRoom) -> Result<RoomInfo, LiveError> {
-        tokio::time::timeout(LOOKUP_LIMIT, Platforms::official().lookup(self, room))
+        self.lookup_with(&Platforms::official(), room, LOOKUP_LIMIT)
+            .await
+    }
+
+    pub(crate) async fn lookup_with(
+        &self,
+        platforms: &Platforms,
+        room: &LiveRoom,
+        limit: Duration,
+    ) -> Result<RoomInfo, LiveError> {
+        tokio::time::timeout(limit, platforms.lookup(self, room))
             .await
             .unwrap_or_else(|_| {
                 Err(LiveError::Other(format!(
                     "直播平台 {} 秒内没有回应",
-                    LOOKUP_LIMIT.as_secs()
+                    limit.as_secs()
                 )))
             })
     }
@@ -155,6 +165,32 @@ mod tests {
             )
             .await;
         assert!(matches!(result, Err(LiveError::Blocked(_))), "{result:?}");
+    }
+
+    #[tokio::test]
+    async fn slow_lookups_give_up() {
+        use crate::bilibili::Bilibili;
+        use wiremock::matchers::path;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(path("/xlive/web-room/v1/index/getH5InfoByRoom"))
+            .respond_with(ResponseTemplate::new(200).set_delay(Duration::from_secs(30)))
+            .mount(&server)
+            .await;
+        let platforms = Platforms {
+            bilibili: Bilibili::at(&server.uri()),
+        };
+        let started = std::time::Instant::now();
+        let result = LiveClient::for_tests()
+            .lookup_with(
+                &platforms,
+                &LiveRoom::Bilibili { id: 12345 },
+                Duration::from_millis(200),
+            )
+            .await;
+        assert!(matches!(result, Err(LiveError::Other(_))), "{result:?}");
+        assert!(started.elapsed() < Duration::from_secs(5));
     }
 
     #[tokio::test]

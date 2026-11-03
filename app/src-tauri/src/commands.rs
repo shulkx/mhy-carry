@@ -247,6 +247,19 @@ pub async fn scan_start(
     id: Option<u32>,
     room: Option<String>,
 ) -> CommandResult {
+    // 直播间：先检查输入，再自己查一次主播名，带进直播间的名称；查不到就不带（第 6.5 节）。
+    // 最多等 3 秒。这时还不算开始扫描，所以放在下面占用扫描状态之前，免得这几秒里
+    // 界面以为空闲、后端却当作扫描中。
+    let live = match target {
+        TargetKind::Live => Some(
+            parse_room(room.as_deref().unwrap_or_default()).map_err(|error| error.to_string())?,
+        ),
+        _ => None,
+    };
+    let anchor = match &live {
+        Some(live) => look_up(live).await.ok().map(|info| info.anchor),
+        None => None,
+    };
     let (stop, stop_signal) = mpsc::channel(1);
     let (idle_timeout, active, auto_confirm) = {
         let shared = app.state::<Shared>();
@@ -257,11 +270,9 @@ pub async fn scan_start(
         if model.bind.in_progress() {
             return Err("绑定中不能开始扫描。".to_owned());
         }
-        if target == TargetKind::Live {
-            let room = room.as_deref().unwrap_or_default();
-            parse_room(room).map_err(|error| error.to_string())?;
+        if live.is_some() {
             // 记住这次的直播间。写不进去也不影响这次扫描。
-            model.settings.scan.live_room = room.trim().to_owned();
+            model.settings.scan.live_room = room.as_deref().unwrap_or_default().trim().to_owned();
             let _ = model.settings.save(&shared.settings_path);
         }
         model.scan_stop = Some(stop);
@@ -272,11 +283,6 @@ pub async fn scan_start(
             model.settings.active_account.clone(),
             model.settings.scan.auto_confirm,
         )
-    };
-    // 开始扫描直播间时自己再查一次主播名，带进直播间的名称；查不到就不带（第 6.5 节）。
-    let anchor = match (target, room.as_deref().map(parse_room)) {
-        (TargetKind::Live, Some(Ok(live))) => look_up(&live).await.ok().map(|info| info.anchor),
-        _ => None,
     };
     let job = prepare_job(
         &app,
