@@ -1,7 +1,7 @@
 name: Release
 
 # 推送 v* tag 时构建并发布（设计文档第 12 节）。
-# 手动运行（workflow_dispatch）只构建，文件作为构建产物上传，不生成构建来源证明，也不发布，
+# 手动运行（workflow_dispatch）只构建和签名，文件作为构建产物上传，不生成构建来源证明，也不发布，
 # 用来在打 tag 之前试跑。
 on:
   push:
@@ -59,8 +59,53 @@ jobs:
           path: dist/
           if-no-files-found: error
 
-  attest:
+  # 给 SHA256SUMS 签名，自动更新只装签名对得上的文件（设计文档第 6.6 节）。只有这个 job
+  # 拿得到签名私钥：它不编译任何代码，只用系统软件源里的 minisign。
+  sign:
     needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: crates/update/update.pub
+          sparse-checkout-cone-mode: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: dist
+          path: dist
+      - name: 核对 SHA256SUMS
+        working-directory: dist
+        run: sha256sum -c SHA256SUMS
+      - name: 安装 minisign
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq minisign
+      - name: 签名
+        env:
+          SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
+          SIGNING_PASSWORD: ${{ secrets.UPDATE_SIGNING_PASSWORD }}
+        run: |
+          if [ -z "$SIGNING_KEY" ] || [ -z "$SIGNING_PASSWORD" ]; then
+            echo "仓库没有设置签名私钥（UPDATE_SIGNING_KEY、UPDATE_SIGNING_PASSWORD）" >&2
+            exit 1
+          fi
+          umask 077
+          # Tauri 生成的私钥文件是 minisign 格式外面套一层 base64。
+          printf '%s' "$SIGNING_KEY" | tr -d '\r\n ' | base64 -d > "$RUNNER_TEMP/update.key"
+          printf '%s\n' "$SIGNING_PASSWORD" | minisign -S -s "$RUNNER_TEMP/update.key" \
+            -m dist/SHA256SUMS -x dist/SHA256SUMS.minisig -t "MhyCarry $GITHUB_REF_NAME"
+          rm -f "$RUNNER_TEMP/update.key"
+      - name: 用仓库里的公钥核对签名
+        run: minisign -V -p crates/update/update.pub -m dist/SHA256SUMS -x dist/SHA256SUMS.minisig
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: signature
+          path: dist/SHA256SUMS.minisig
+          if-no-files-found: error
+
+  attest:
+    needs: [build, sign]
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
@@ -70,6 +115,10 @@ jobs:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: dist
+          path: dist
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: signature
           path: dist
       - name: 核对 SHA256SUMS
         working-directory: dist
@@ -89,6 +138,10 @@ jobs:
         with:
           name: dist
           path: dist
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: signature
+          path: dist
       - name: 核对 SHA256SUMS
         working-directory: dist
         run: sha256sum -c SHA256SUMS
@@ -102,6 +155,7 @@ jobs:
 
           - \`MhyCarry_${TAG#v}_x64-setup.exe\`：安装包，只为当前用户安装，不需要管理员权限。
           - \`MhyCarry_${TAG#v}_x64-portable.exe\`：免安装版，下载后直接运行。
+          - \`SHA256SUMS.minisig\`：自动更新用的签名，程序只装签名对得上的文件。
 
           两种都需要系统里有 WebView2 运行时：Windows 11 自带，Windows 10 一般也已经装好；缺少时，安装包会自动下载安装。
 
