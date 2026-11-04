@@ -2358,3 +2358,8 @@ $env:MHY_CARRY_SIGNED_DIR = "<临时文件夹>"; cargo test -p mhy-carry-update 
   - 自动更新重启前先调插件的 `destroy` 放开互斥量，否则新版本会以为已经有一个在运行而退出。这一步要等任务 13 的实测才能验证。
   - “另一个窗口正在更新”的保护留着：改成单例后基本碰不到，但代码很少，也有测试。
   - 实测：第二个约 0.2 秒退出，第一个从最小化恢复并切到前台，只剩一个进程。
+- **签名密钥**（2026-11-04）：用户请我代为生成。
+  - 用一个 PowerShell 脚本生成：密码是 24 个随机字节，私钥用 `cargo tauri signer generate --ci` 写进文件，再用管道交给 `gh secret set`。输出全部丢弃，私钥和密码没有进入对话。
+  - 文件在 `%USERPROFILE%\.mhycarry-signing\`：`update.key`（私钥）、`update.key.password`（密码）、`update.key.pub`（公钥），由用户备份。
+  - 公钥 ID `219145D4CD58C838`，解开 base64 后提交为 `crates/update/update.pub`，替换掉执行中用的临时测试公钥。
+  - 本机先验证过：用私钥和密码签一个假的 `SHA256SUMS`（`cargo tauri signer sign -f`；`-k` 接的是私钥内容，不是路径），程序里的公钥能核对。
