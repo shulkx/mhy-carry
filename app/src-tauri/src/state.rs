@@ -246,6 +246,18 @@ impl UpdateView {
         matches!(self, Self::Downloading { .. } | Self::Installing { .. })
     }
 
+    /// 现在能不能检查更新：检查中、下载或替换中不行；已经换好新版本、等着重启时也不行，
+    /// 因为这个进程还是旧版本，查了只会再装一遍，而且换不上。
+    pub fn can_check(&self) -> bool {
+        !matches!(
+            self,
+            Self::Checking
+                | Self::Downloading { .. }
+                | Self::Installing { .. }
+                | Self::NeedsRestart { .. }
+        )
+    }
+
     /// 现在可以开始更新的版本：有新版本并且能自动更新，或者上次更新失败了可以重试。
     pub fn installable(&self) -> Option<&str> {
         match self {
@@ -572,5 +584,61 @@ mod tests {
         assert!(UpdateView::Installing { version: version() }.busy());
         assert!(!UpdateView::NeedsRestart { version: version() }.busy());
         assert!(!UpdateView::Checking.busy());
+    }
+
+    #[test]
+    fn checks_wait_until_nothing_is_in_progress() {
+        let version = || "0.4.1".to_owned();
+        assert!(UpdateView::Idle.can_check());
+        assert!(UpdateView::Latest.can_check());
+        assert!(
+            UpdateView::Available {
+                version: version(),
+                installable: true
+            }
+            .can_check()
+        );
+        assert!(!UpdateView::Checking.can_check());
+        assert!(
+            !UpdateView::Downloading {
+                version: version(),
+                percent: 0
+            }
+            .can_check()
+        );
+        assert!(!UpdateView::NeedsRestart { version: version() }.can_check());
+    }
+
+    /// 界面按这些名字显示（main.js 的 renderUpdate）。
+    #[test]
+    fn update_view_is_a_tagged_snapshot() {
+        let json = |view: UpdateView| serde_json::to_value(view).unwrap();
+        assert_eq!(
+            json(UpdateView::Downloading {
+                version: "0.4.1".to_owned(),
+                percent: 45
+            }),
+            serde_json::json!({"kind": "downloading", "version": "0.4.1", "percent": 45})
+        );
+        assert_eq!(
+            json(UpdateView::NeedsRestart {
+                version: "0.4.1".to_owned()
+            }),
+            serde_json::json!({"kind": "needs_restart", "version": "0.4.1"})
+        );
+        assert_eq!(
+            json(UpdateView::Failed {
+                message: "网络请求失败".to_owned(),
+                version: None
+            }),
+            serde_json::json!({"kind": "failed", "message": "网络请求失败", "version": null})
+        );
+        assert_eq!(
+            json(UpdateView::Available {
+                version: "0.4.1".to_owned(),
+                installable: false
+            }),
+            serde_json::json!({"kind": "available", "version": "0.4.1", "installable": false})
+        );
     }
 }

@@ -23,7 +23,7 @@ use tauri::{AppHandle, Manager, State};
 use tokio::sync::mpsc;
 
 use crate::model::{Model, Shared, reload_accounts, update};
-use crate::state::{AppState, BindView, UpdateView, apply_settings};
+use crate::state::{AppState, BindView, apply_settings};
 use crate::{bind, scan, updater};
 
 type CommandResult<T = ()> = Result<T, String>;
@@ -32,6 +32,8 @@ const ACCOUNT_GONE: &str = "这个账号已经不在了。";
 
 #[tauri::command]
 pub fn get_state(shared: State<'_, Shared>) -> AppState {
+    // 界面已经打开了：删掉上次更新换下来的旧版本（设计文档第 6.6 节“更新”第 6 步）。
+    updater::clean_up_once();
     shared.snapshot()
 }
 
@@ -268,12 +270,7 @@ pub async fn scan_start(
         if model.scanning() {
             return Ok(());
         }
-        if model.bind.in_progress() {
-            return Err("绑定中不能开始扫描。".to_owned());
-        }
-        if model.update.busy() {
-            return Err("正在更新，不能开始扫描。".to_owned());
-        }
+        model.ensure_can_start_scan()?;
         if live.is_some() {
             // 记住这次的直播间。写不进去也不影响这次扫描。
             model.settings.scan.live_room = room.as_deref().unwrap_or_default().trim().to_owned();
@@ -463,32 +460,23 @@ pub fn check_update(app: AppHandle) {
 /// 下载、核对并换上新版本，然后重启（设计文档第 6.6 节）。扫描中、绑定中不能更新。
 #[tauri::command]
 pub fn install_update(app: AppHandle) -> CommandResult {
-    let mut result = Ok(());
-    let mut target = None;
-    update(&app, |model| {
-        if model.scanning() {
-            result = Err("扫描中不能更新，先停止扫描。".to_owned());
-            return;
-        }
-        if model.bind.in_progress() {
-            result = Err("绑定中不能更新。".to_owned());
-            return;
-        }
-        match model.update.installable().and_then(Version::parse) {
-            Some(version) => {
-                model.update = UpdateView::Downloading {
-                    version: version.to_string(),
-                    percent: 0,
-                };
-                target = Some(version);
-            }
-            None => result = Err("没有可以自动安装的新版本。".to_owned()),
-        }
-    });
-    if let Some(version) = target {
-        tauri::async_runtime::spawn(updater::install(app, version));
+    let mut result = Ok(None);
+    update(&app, |model| result = model.begin_update().map(Some));
+    if let Some(version) = result? {
+        let task = tauri::async_runtime::spawn(updater::install(app.clone(), version));
+        app.state::<Shared>().lock().update_task = Some(task);
     }
-    result
+    Ok(())
+}
+
+/// 取消正在进行的下载（设计文档第 6.6 节）。下载完、开始替换以后就不能取消了。
+#[tauri::command]
+pub fn cancel_update(app: AppHandle) {
+    let mut task = None;
+    update(&app, |model| task = model.cancel_download());
+    if let Some(task) = task {
+        task.abort();
+    }
 }
 
 /// 用默认浏览器打开发布页面（设计文档第 6.6 节）。地址由程序按版本号拼出。

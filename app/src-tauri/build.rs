@@ -17,6 +17,7 @@ fn main() {
         "lookup_room",
         "check_update",
         "install_update",
+        "cancel_update",
         "open_release_page",
         "set_check_updates",
     ]);

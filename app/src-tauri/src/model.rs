@@ -11,6 +11,7 @@ use mhy_carry_core::scan::ScanStatus;
 use mhy_carry_core::settings::Settings;
 use mhy_carry_core::store::{AccountStore, JsonFileStore};
 use mhy_carry_platform::paths;
+use mhy_carry_update::Version;
 use tauri::async_runtime::JoinHandle;
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::mpsc;
@@ -39,6 +40,8 @@ pub struct Model {
     pub notice_at: Option<String>,
     /// 检查更新和自动更新（设计文档第 6.6 节）。
     pub update: UpdateView,
+    /// 正在进行的下载，取消时中止它。
+    pub update_task: Option<JoinHandle<()>>,
     /// 最新快照的序号，每推送一次加一。
     seq: u64,
     /// 上一次推送给界面的快照，没变就不再推送。
@@ -46,6 +49,51 @@ pub struct Model {
 }
 
 impl Model {
+    /// 能不能开始扫描（已经在扫描的情况由调用方先处理）：绑定中、更新中都不行。
+    pub fn ensure_can_start_scan(&self) -> Result<(), String> {
+        if self.bind.in_progress() {
+            return Err("绑定中不能开始扫描。".to_owned());
+        }
+        if self.update.busy() {
+            return Err("正在更新，不能开始扫描。".to_owned());
+        }
+        Ok(())
+    }
+
+    /// 开始下载新版本（设计文档第 6.6 节）：扫描中、绑定中不能更新。成功时状态变成下载中，
+    /// 返回要装的版本。
+    pub fn begin_update(&mut self) -> Result<Version, String> {
+        if self.scanning() {
+            return Err("扫描中不能更新，先停止扫描。".to_owned());
+        }
+        if self.bind.in_progress() {
+            return Err("绑定中不能更新。".to_owned());
+        }
+        let version = self
+            .update
+            .installable()
+            .and_then(Version::parse)
+            .ok_or_else(|| "没有可以自动安装的新版本。".to_owned())?;
+        self.update = UpdateView::Downloading {
+            version: version.to_string(),
+            percent: 0,
+        };
+        Ok(version)
+    }
+
+    /// 取消下载：回到“有新版本”，返回下载任务，由调用方中止。不在下载时什么都不做：
+    /// 已经开始替换就来不及了。
+    pub fn cancel_download(&mut self) -> Option<JoinHandle<()>> {
+        let UpdateView::Downloading { version, .. } = &self.update else {
+            return None;
+        };
+        self.update = UpdateView::Available {
+            version: version.clone(),
+            installable: true,
+        };
+        self.update_task.take()
+    }
+
     pub fn scanning(&self) -> bool {
         self.scan_stop.is_some()
     }
@@ -97,6 +145,7 @@ impl Shared {
             last_notice: None,
             notice_at: None,
             update: UpdateView::Idle,
+            update_task: None,
             seq: 0,
             last_sent: None,
         };
@@ -187,4 +236,121 @@ pub fn save_role(model: &mut Model, store: &JsonFileStore, id: &str, role: &Game
         let _ = store.save(&file);
     }
     reload_accounts(model, store);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mhy_carry_core::settings::{ScanSettings, UpdateSettings};
+
+    fn idle() -> Model {
+        Model {
+            accounts: AccountsView::None { notice: None },
+            credentials: HashMap::new(),
+            bind: BindView::Idle,
+            scan: ScanStatus::Idle { last: None },
+            scan_account: None,
+            settings: Settings {
+                format: 1,
+                device_id: "0b8f4a1e-1111-4222-8333-944445555666".to_owned(),
+                active_account: None,
+                scan: ScanSettings::default(),
+                update: UpdateSettings::default(),
+            },
+            leftovers: 0,
+            bind_task: None,
+            scan_stop: None,
+            last_notice: None,
+            notice_at: None,
+            update: UpdateView::Idle,
+            update_task: None,
+            seq: 0,
+            last_sent: None,
+        }
+    }
+
+    fn available(installable: bool) -> UpdateView {
+        UpdateView::Available {
+            version: "0.4.1".to_owned(),
+            installable,
+        }
+    }
+
+    fn downloading() -> UpdateView {
+        UpdateView::Downloading {
+            version: "0.4.1".to_owned(),
+            percent: 0,
+        }
+    }
+
+    #[test]
+    fn updates_start_only_when_idle_and_installable() {
+        let mut model = idle();
+        assert!(model.begin_update().is_err());
+        model.update = available(false);
+        assert!(model.begin_update().is_err());
+
+        model.update = available(true);
+        let (stop, _signal) = mpsc::channel(1);
+        model.scan_stop = Some(stop);
+        assert!(model.begin_update().unwrap_err().contains("扫描中"));
+        model.scan_stop = None;
+        model.bind = BindView::Requesting;
+        assert!(model.begin_update().unwrap_err().contains("绑定中"));
+        assert_eq!(model.update, available(true));
+
+        model.bind = BindView::Idle;
+        assert_eq!(model.begin_update().unwrap().to_string(), "0.4.1");
+        assert_eq!(model.update, downloading());
+        // 下载中不能再开始一次。
+        assert!(model.begin_update().is_err());
+    }
+
+    #[test]
+    fn nothing_else_starts_while_updating() {
+        let mut model = idle();
+        for update in [
+            downloading(),
+            UpdateView::Installing {
+                version: "0.4.1".to_owned(),
+            },
+        ] {
+            model.update = update;
+            assert!(model.ensure_idle().unwrap_err().contains("正在更新"));
+            assert!(
+                model
+                    .ensure_can_start_scan()
+                    .unwrap_err()
+                    .contains("正在更新")
+            );
+        }
+        model.update = available(true);
+        assert!(model.ensure_idle().is_ok());
+        assert!(model.ensure_can_start_scan().is_ok());
+        model.bind = BindView::Requesting;
+        assert!(
+            model
+                .ensure_can_start_scan()
+                .unwrap_err()
+                .contains("绑定中")
+        );
+    }
+
+    #[test]
+    fn cancelling_goes_back_to_the_available_update() {
+        let mut model = idle();
+        model.update = UpdateView::Downloading {
+            version: "0.4.1".to_owned(),
+            percent: 45,
+        };
+        assert!(model.cancel_download().is_none());
+        assert_eq!(model.update, available(true));
+        // 已经开始替换就来不及了。
+        let installing = UpdateView::Installing {
+            version: "0.4.1".to_owned(),
+        };
+        model.update = installing.clone();
+        assert!(model.cancel_download().is_none());
+        assert_eq!(model.update, installing);
+    }
 }

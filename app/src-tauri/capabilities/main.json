@@ -20,6 +20,7 @@
     "allow-lookup-room",
     "allow-check-update",
     "allow-install-update",
+    "allow-cancel-update",
     "allow-open-release-page",
     "allow-set-check-updates"
   ]

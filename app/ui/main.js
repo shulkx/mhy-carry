@@ -17,6 +17,8 @@ const WAITING = [
 const BAD_STOPS = ["credential_invalid", "target_gone", "capture_failing", "credential_check_failed", "live_failed"];
 const MAX_NOTE_CHARS = 20;
 const UPDATING = ["downloading", "installing"];
+// 这几种状态下不能检查更新（和 Rust 端 UpdateView::can_check 一致）。
+const NO_CHECK = ["checking", "downloading", "installing", "needs_restart"];
 
 let state = null;
 let target = null; // 界面上选的截图目标；还没选过时用设置里的默认值
@@ -71,9 +73,13 @@ function activeAccount() {
   return accountList().find((item) => item.id === state.accounts.active) ?? null;
 }
 
+function updating() {
+  return UPDATING.includes(state.update.kind);
+}
+
 // 扫描中、绑定中、更新中不能动账号（设计文档第 9 节、第 6.6 节）。
 function accountsLocked() {
-  return state.scan.kind !== "idle" || BUSY_BIND.includes(state.bind.kind) || UPDATING.includes(state.update.kind);
+  return state.scan.kind !== "idle" || BUSY_BIND.includes(state.bind.kind) || updating();
 }
 
 function startBind(passportId = null) {
@@ -127,7 +133,9 @@ function renderAccount() {
     box.append(el("div", { class: "meta" }, "还没有绑定账号。用米游社 App 扫码绑定后，就能用这个账号确认游戏登录。"));
     if (accounts.notice) box.append(el("div", { class: "message bad" }, accounts.notice));
     const actions = el("div", { class: "actions" });
-    actions.append(button("用米游社扫码绑定", "btn primary", () => startBind()));
+    const bind = button("用米游社扫码绑定", "btn primary", () => startBind());
+    bind.disabled = updating();
+    actions.append(bind);
     box.append(actions);
   } else {
     box.append(renderCard(activeAccount()));
@@ -288,8 +296,9 @@ function renderBind(box, bind) {
   if (bind.kind === "requesting") {
     actions.append(button("取消", "btn", close));
   } else {
-    actions.append(button(bind.kind === "expired" ? "刷新" : "重新绑定", "btn primary", () => startBind(rebindFor)),
-      button("关闭", "btn", close));
+    const again = button(bind.kind === "expired" ? "刷新" : "重新绑定", "btn primary", () => startBind(rebindFor));
+    again.disabled = updating();
+    actions.append(again, button("关闭", "btn", close));
   }
   box.append(actions);
 }
@@ -424,8 +433,7 @@ function renderScan() {
     start.disabled = true;
   } else if (idle) {
     // 大按钮写着扫描用的账号（设计文档第 6.3 节）。
-    const ready = active && active.credential !== "invalid" && !BUSY_BIND.includes(state.bind.kind)
-      && !UPDATING.includes(state.update.kind);
+    const ready = active && active.credential !== "invalid" && !BUSY_BIND.includes(state.bind.kind) && !updating();
     start.textContent = active ? "开始扫描（" + active.name + "）" : "开始扫描";
     start.disabled = !ready;
   } else {
@@ -470,6 +478,7 @@ function renderUpdate() {
     actions.append(page());
   } else if (update.kind === "downloading") {
     text = "正在下载 v" + update.version + "… " + update.percent + "%";
+    actions.append(button("取消", "btn small", () => call("cancel_update")));
   } else if (update.kind === "installing") {
     text = "正在安装 v" + update.version + "，马上重启…";
   } else if (update.kind === "needs_restart") {
@@ -491,7 +500,7 @@ function renderUpdate() {
   else if (update.kind === "available") result = "有新版本 v" + update.version;
   else if (update.kind === "failed" && !update.version) result = "检查失败：" + update.message;
   $("update-result").textContent = result;
-  $("check-update").disabled = update.kind === "checking" || UPDATING.includes(update.kind);
+  $("check-update").disabled = NO_CHECK.includes(update.kind);
   $("setting-check-updates").checked = state.settings.check_updates;
 }
 

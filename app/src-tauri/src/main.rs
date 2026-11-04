@@ -35,6 +35,7 @@ fn main() {
             commands::lookup_room,
             commands::check_update,
             commands::install_update,
+            commands::cancel_update,
             commands::open_release_page,
             commands::set_check_updates,
         ])
