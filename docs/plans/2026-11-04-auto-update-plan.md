@@ -2310,19 +2310,19 @@ $env:MHY_CARRY_SIGNED_DIR = "<临时文件夹>"; cargo test -p mhy-carry-update 
 
 ### 任务 13：发布 v0.4.0 并实测（先问用户）
 
-- [ ] 版本号改成 `0.4.0`（`Cargo.toml`、`tauri.conf.json`），跑 `cargo build` 更新 `Cargo.lock`，提交 `release: 0.4.0`。
-- [ ] 用户同意后打 tag `v0.4.0` 并推送，等发布流程跑完；Release 里有 `SHA256SUMS.minisig`。
-- [ ] 下载四个文件，逐个 `gh attestation verify`，再 `sha256sum -c SHA256SUMS`。
-- [ ] **免安装版实测：**
+- [x] 版本号改成 `0.4.0`（`Cargo.toml`、`tauri.conf.json`），跑 `cargo build` 更新 `Cargo.lock`，提交 `release: 0.4.0`。
+- [x] 用户同意后打 tag `v0.4.0` 并推送，等发布流程跑完；Release 里有 `SHA256SUMS.minisig`。
+- [x] 下载四个文件，逐个 `gh attestation verify`，再 `sha256sum -c SHA256SUMS`。
+- [x] **免安装版实测：**
   1. 把本地版本号临时改成 `0.3.9`（不提交），`cargo build --release -p mhy-carry`；
   2. 把 exe 复制到临时文件夹，用临时数据目录打开；
   3. 应该看到“有新版本 v0.4.0”，点“更新并重启”；
   4. 程序重启后是 v0.4.0：exe 的 SHA256 和 Release 里的免安装版一致，`.old` 几秒后被删掉。
-- [ ] **安装版实测**（会改你装好的程序，先问用户）：
+- [x] **安装版实测**（会改你装好的程序，先问用户）：
   1. 把同一个 0.3.9 的 exe 复制到 `%LOCALAPPDATA%\MhyCarry\mhy-carry.exe`，原来的先备份；
   2. 打开后更新；
   3. 重启后是 v0.4.0，注册表里的 `DisplayVersion` 变成 `0.4.0`。
-- [ ] 设计文档状态行和第 14 节加实测结论，计划打勾，CLAUDE.md 更新进度，提交并推送。
+- [x] 设计文档状态行和第 14 节加实测结论，计划打勾，CLAUDE.md 更新进度，提交并推送。
 
 ---
 
@@ -2369,3 +2369,7 @@ $env:MHY_CARRY_SIGNED_DIR = "<临时文件夹>"; cargo test -p mhy-carry-update 
 - **任务 11：试跑签名**（2026-11-04，运行 41792350474，在 main 上手动运行）：`build`、`sign` 成功，`attest`、`release` 按预期跳过。
   - 系统软件源里的 minisign 能从管道读密码，签名是预先哈希的格式（`ED`）。
   - 下载产物后 `sha256sum -c` 通过；`verifies_a_signature_made_in_ci` 用程序里的公钥核对通过，签名说明是 `MhyCarry main`，所以这份签名程序不会拿来装。
+- **任务 13：发布和实测**（2026-11-04，发布流程 41797578454）：用户同意发布 v0.4.0，也同意在用户装的程序上实测安装版。
+  - 四个文件的构建来源证明、`SHA256SUMS`、签名都核对通过（设计文档第 14 节第 12 项）。
+  - 免安装版和安装版都从 0.3.9 的测试构建自动更新到 v0.4.0：新版本自己打开，exe 和 Release 里的一致，`.old` 已清理，只剩一个进程。安装版的 `DisplayVersion` 变成 0.4.0。
+  - 用户原来装的 v0.3.0 的 exe 备份在会话的临时文件夹里（`scratchpad\m8test\installed-backup-mhy-carry.exe`）；现在装的是 v0.4.0。
