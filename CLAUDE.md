@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 MhyCarry：识别屏幕上的米哈游游戏登录二维码，用用户绑定的账号确认登录（常见用法：请主播或朋友帮打难关）。Rust workspace + 以后的 Tauri 2 应用，v1 只做 Windows、原神国服官服、一个账号。用户用中文交流。
 
 - 设计：[docs/design/2026-10-11-mhy-carry-design.md](docs/design/2026-10-11-mhy-carry-design.md)，已经和用户逐节确认过。改动设计前先问用户。
-- 进度：M0–M5 全部完成，v0.2.0（多账号）已发布（计划见 [docs/plans/](docs/plans/)，实测结论在设计文档第 14 节）。M6（v0.3 直播间抢码，设计文档第 6.5 节，计划 [docs/plans/2026-10-15-v0.3-live-plan.md](docs/plans/2026-10-15-v0.3-live-plan.md)）已完成，v0.3.0 已发布；用户本人用直播间抢码的实测结果还没反馈，补上后写进设计文档第 14 节第 10 项。2026-11-04 加了“确认直播间”（设计文档第 6.5 节，计划 [docs/plans/2026-11-04-room-confirm-plan.md](docs/plans/2026-11-04-room-confirm-plan.md)），v0.3.1 已发布。以后发新版本：改 `tauri.conf.json` 和 `Cargo.toml` 里的版本号，推送 `v*` tag，由 `release.yml` 构建发布；发布前先问用户。
+- 进度：M0–M5 全部完成，v0.2.0（多账号）已发布（计划见 [docs/plans/](docs/plans/)，实测结论在设计文档第 14 节）。M6（v0.3 直播间抢码，设计文档第 6.5 节，计划 [docs/plans/2026-10-15-v0.3-live-plan.md](docs/plans/2026-10-15-v0.3-live-plan.md)）已完成，v0.3.0 已发布；用户本人用直播间抢码的实测结果还没反馈，补上后写进设计文档第 14 节第 10 项。2026-11-04 加了“确认直播间”（设计文档第 6.5 节，计划 [docs/plans/2026-11-04-room-confirm-plan.md](docs/plans/2026-11-04-room-confirm-plan.md)），v0.3.1 已发布。2026-11-04 加了检查更新和自动更新（设计文档第 6.6 节，计划 [docs/plans/2026-11-04-auto-update-plan.md](docs/plans/2026-11-04-auto-update-plan.md)），还没发布。以后发新版本：改 `tauri.conf.json` 和 `Cargo.toml` 里的版本号，推送 `v*` tag，由 `release.yml` 构建发布；发布前先问用户。
 - 数据目录是 `%LOCALAPPDATA%\io.github.shulkx.mhycarry\`（Tauri 应用标识，设计文档第 8 节）；安装包只为当前用户安装，程序装在 `%LOCALAPPDATA%\MhyCarry\`。
 
 ## 执行计划
@@ -31,6 +31,7 @@ cargo run -p mhy-carry-cli -- account [--refresh | --use <通行证ID> | --note 
 cargo run -p mhy-carry-cli -- bind | login <URL> | login --image <截图>
 cargo run --release -p mhy-carry-cli -- watch [--target auto|window|monitor|live] [--room <直播间>] [--auto-confirm] [--account <通行证ID>]
 $env:MHY_CARRY_LIVE_ROOM = "<在播的房间号>"; cargo test --release -p mhy-carry-live -- --ignored --nocapture   # 联网拉一个公开直播间
+$env:MHY_CARRY_SIGNED_DIR = "<下载的 dist 和 signature 产物>"; cargo test -p mhy-carry-update -- --ignored --nocapture   # 核对 CI 生成的签名
 cargo run -p mhy-carry                           # 图形界面（调试版，右键“检查”可打开开发者工具）
 Push-Location app; cargo tauri build --bundles nsis --ci; Pop-Location   # 安装包，需要 tauri-cli 2.12.0
 ```
@@ -50,11 +51,13 @@ Push-Location app; cargo tauri build --bundles nsis --ci; Pop-Location   # 安�
 - 新增或修改任何米哈游接口前，先对照**近期仍在维护**的开源项目核对：看仓库的 `pushed_at` 和相关文件的最后提交时间。接口变化很快，2026 年就废弃过一整套流程。核对来源记到设计文档第 16 节。
 - 设计文档第 6 节是当前的接口约定，第 14 节是用真实账号实测的结论。接口有变化时，实测结论要写回这两节。
 - 网络白名单只有 `api-sdk.mihoyo.com` 和 `passport-api.mihoyo.com`（设计文档第 9 节）。新增域名要同时改 `crates/api/src/guard.rs` 和设计文档，并告诉用户。不加遥测，也不连任何第三方服务器。
+- 直播客户端（`crates/live/src/client.rs`）和更新客户端（`crates/update/src/client.rs`，只有 `github.com`、`release-assets.githubusercontent.com`）各有自己的白名单，都不带凭证。改它们同样要改设计文档并告诉用户。
 
 ## 安全红线
 
 - stoken、ticket、Cookie、`accounts.json` 的内容，不贴进聊天、不提交、不写进文档或日志。实测时只记录字段名和错误码。含二维码的截图也不提交。
 - 用真实账号测试只能由用户本人手动操作；CI 里不放任何凭证。
+- 自动更新的签名私钥和密码只在用户本机和仓库的 Actions secrets（`UPDATE_SIGNING_KEY`、`UPDATE_SIGNING_PASSWORD`）里：不读，不贴进聊天，不提交。只读公钥 `update.key.pub`，解开 base64 后提交为 `crates/update/update.pub`。
 - 对外的操作先问用户：创建或推送 GitHub 仓库、发布 Release、改仓库设置。
 
 ## 本机环境

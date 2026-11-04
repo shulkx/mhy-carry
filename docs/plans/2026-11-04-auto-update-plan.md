@@ -8,8 +8,8 @@
 - `core`：设置里加 `update.check_on_start`，默认开。
 - 新包 `update`（`mhy-carry-update`，不依赖其他单元）：
   - 版本号；
-  - 解析 `releases/latest`；
-  - 更新客户端：只能访问 GitHub 的三个域名；
+  - 从“最新发布”链接的跳转地址里读出版本号；
+  - 更新客户端：只能访问 GitHub 的两个域名；
   - 签名核对，用 `minisign-verify`；
   - 下载到 `.new`，换掉正在运行的 exe。
 - `platform`：安装版在注册表里的版本号；用默认浏览器打开发布页面。
@@ -26,7 +26,7 @@
 - `sha2` 0.10（已经在 `Cargo.lock` 里）；
 - 只在测试里用：`minisign` 0.10（MIT），用来生成测试用的密钥和签名。
 
-**新增域名：** `api.github.com`、`github.com`、`release-assets.githubusercontent.com`，只给更新客户端用，用户已同意。
+**新增域名：** `github.com`、`release-assets.githubusercontent.com`，只给更新客户端用，用户已同意。原来还有 `api.github.com`，执行中改掉了，见执行记录。
 
 ---
 
@@ -118,6 +118,8 @@ impl Default for UpdateSettings {
 
 ### 任务 2：`update` 包：版本号、最新发布、错误
 
+（`release.rs` 和任务 3、5 的代码是按执行记录里“查版本改走网页跳转”改过之后的版本；`lib.rs` 在任务 2、3 里先只写当时用得到的部分。）
+
 **文件：**
 - 修改 `Cargo.toml`（workspace）；
 - 新建 `crates/update/Cargo.toml`、`src/lib.rs`、`src/version.rs`、`src/release.rs`、`src/error.rs`。
@@ -149,8 +151,6 @@ publish.workspace = true
 [dependencies]
 minisign-verify.workspace = true
 reqwest.workspace = true
-serde.workspace = true
-serde_json.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["fs", "io-util"] }
@@ -258,14 +258,14 @@ mod tests {
 ```rust
 //! GitHub 上最新的正式发布（设计文档第 6.6 节“检查”）。
 
-use serde::Deserialize;
+use url::Url;
 
 use crate::version::Version;
 
+pub(crate) const REPO: &str = "shulkx/mhy-carry";
 /// 发布里签过名的文件列表，和它的签名。
 pub(crate) const SUMS: &str = "SHA256SUMS";
 pub(crate) const SUMS_SIGNATURE: &str = "SHA256SUMS.minisig";
-const RELEASES_PAGE: &str = "https://github.com/shulkx/mhy-carry/releases";
 
 /// 免安装版 exe 的文件名，和 `release.yml` 里的一致。
 pub(crate) fn program_file(version: Version) -> String {
@@ -275,48 +275,30 @@ pub(crate) fn program_file(version: Version) -> String {
 /// 发布页面的地址。不知道版本时是最新发布的页面。
 pub fn release_page(version: Option<Version>) -> String {
     match version {
-        Some(version) => format!("{RELEASES_PAGE}/tag/v{version}"),
-        None => format!("{RELEASES_PAGE}/latest"),
+        Some(version) => format!("https://github.com/{REPO}/releases/tag/v{version}"),
+        None => format!("https://github.com/{REPO}/releases/latest"),
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Release {
     pub version: Version,
-    /// 带签名和免安装版 exe，可以自动更新；否则只能到发布页面手动下载。
+    /// 签名对得上，可以自动更新；否则只能到发布页面手动下载。
     pub installable: bool,
 }
 
-#[derive(Deserialize)]
-struct Latest {
-    tag_name: String,
-    #[serde(default)]
-    draft: bool,
-    #[serde(default)]
-    prerelease: bool,
-    #[serde(default)]
-    assets: Vec<Asset>,
-}
-
-#[derive(Deserialize)]
-struct Asset {
-    name: String,
-}
-
-/// 解析 `releases/latest` 的返回。草稿、预发布、版本号格式不对的都当作没有新版本。
-pub(crate) fn parse_latest(body: &[u8]) -> Result<Option<Release>, String> {
-    let latest: Latest = serde_json::from_slice(body).map_err(|error| error.to_string())?;
-    if latest.draft || latest.prerelease {
-        return Ok(None);
+/// 从“最新发布”链接的跳转地址里读出版本号：`<site>/shulkx/mhy-carry/releases/tag/v<版本>`。
+/// `site` 是请求的网站（正式版是 https://github.com/）。跳到别的网站、别的仓库，或者 tag 不是
+/// `v<主>.<次>.<修订>` 的都不认。GitHub 的“最新发布”不含草稿和预发布。
+pub(crate) fn version_from_location(site: &Url, location: &str) -> Option<Version> {
+    let url = site.join(location).ok()?;
+    if url.origin() != site.origin() {
+        return None;
     }
-    let Some(version) = latest.tag_name.strip_prefix('v').and_then(Version::parse) else {
-        return Ok(None);
-    };
-    let has = |name: &str| latest.assets.iter().any(|asset| asset.name == name);
-    Ok(Some(Release {
-        version,
-        installable: has(SUMS) && has(SUMS_SIGNATURE) && has(&program_file(version)),
-    }))
+    let tag = url
+        .path()
+        .strip_prefix(&format!("/{REPO}/releases/tag/"))?;
+    Version::parse(tag.strip_prefix('v')?)
 }
 
 #[cfg(test)]
@@ -328,68 +310,37 @@ mod tests {
         minor: 4,
         patch: 1,
     };
-    const SIGNED: [&str; 4] = [
-        "MhyCarry_0.4.1_x64-portable.exe",
-        "MhyCarry_0.4.1_x64-setup.exe",
-        "SHA256SUMS",
-        "SHA256SUMS.minisig",
-    ];
 
-    fn body(tag: &str, draft: bool, prerelease: bool, assets: &[&str]) -> Vec<u8> {
-        let assets: Vec<_> = assets
-            .iter()
-            .map(|name| serde_json::json!({ "name": name, "size": 1 }))
-            .collect();
-        serde_json::to_vec(&serde_json::json!({
-            "tag_name": tag,
-            "draft": draft,
-            "prerelease": prerelease,
-            "html_url": "https://github.com/shulkx/mhy-carry/releases/tag/v0.4.1",
-            "assets": assets,
-        }))
-        .unwrap()
+    fn site() -> Url {
+        Url::parse("https://github.com/").unwrap()
     }
 
     #[test]
-    fn signed_releases_can_be_installed() {
-        assert_eq!(
-            parse_latest(&body("v0.4.1", false, false, &SIGNED)),
-            Ok(Some(Release {
-                version: V041,
-                installable: true
-            }))
-        );
-    }
-
-    #[test]
-    fn releases_without_a_signature_or_program_cannot_be_installed() {
-        // v0.3.1 和更早的版本没有签名。
-        let other_version = [
-            "MhyCarry_0.4.0_x64-portable.exe",
-            "SHA256SUMS",
-            "SHA256SUMS.minisig",
-        ];
-        for assets in [&SIGNED[..3], &SIGNED[1..], &other_version[..]] {
-            let release = parse_latest(&body("v0.4.1", false, false, assets))
-                .unwrap()
-                .unwrap();
-            assert!(!release.installable, "{assets:?}");
+    fn reads_the_version_from_the_redirect() {
+        for location in [
+            "https://github.com/shulkx/mhy-carry/releases/tag/v0.4.1",
+            "/shulkx/mhy-carry/releases/tag/v0.4.1",
+        ] {
+            assert_eq!(version_from_location(&site(), location), Some(V041), "{location}");
         }
     }
 
     #[test]
-    fn drafts_prereleases_and_odd_tags_are_ignored() {
-        assert_eq!(parse_latest(&body("v0.4.1", true, false, &SIGNED)), Ok(None));
-        assert_eq!(parse_latest(&body("v0.4.1", false, true, &SIGNED)), Ok(None));
-        for tag in ["0.4.1", "v0.4", "v0.4.1-beta.1", "nightly"] {
-            assert_eq!(parse_latest(&body(tag, false, false, &SIGNED)), Ok(None), "{tag}");
+    fn other_redirects_are_not_versions() {
+        for location in [
+            "https://evil.cn/shulkx/mhy-carry/releases/tag/v0.4.1",
+            "http://github.com/shulkx/mhy-carry/releases/tag/v0.4.1",
+            "https://github.com.evil.cn/shulkx/mhy-carry/releases/tag/v0.4.1",
+            "https://github.com/other/mhy-carry/releases/tag/v0.4.1",
+            "https://github.com/shulkx/mhy-carry/releases/tag/0.4.1",
+            "https://github.com/shulkx/mhy-carry/releases/tag/v0.4.1-beta",
+            "https://github.com/shulkx/mhy-carry/releases/tag/v0.4.1/x",
+            "https://github.com/shulkx/mhy-carry/releases",
+            "https://github.com/login",
+            "",
+        ] {
+            assert_eq!(version_from_location(&site(), location), None, "{location}");
         }
-    }
-
-    #[test]
-    fn unexpected_responses_are_format_errors() {
-        assert!(parse_latest(b"<html></html>").is_err());
-        assert!(parse_latest(br#"{"message":"Not Found"}"#).is_err());
     }
 
     #[test]
@@ -424,7 +375,8 @@ pub enum UpdateError {
     Format(String),
     #[error("文件太大，超过了 {} 的上限", size(*.0))]
     TooLarge(u64),
-    #[error("更新文件核对失败：{0}")]
+    /// 只在更新失败时显示，界面前面已经写了“更新失败：”。
+    #[error("{0}")]
     Verify(String),
     #[error("写入更新文件失败：{0}。可以到发布页面手动下载。")]
     Io(#[from] std::io::Error),
@@ -489,45 +441,44 @@ pub use version::Version;
 
 <!-- file: crates/update/src/client.rs -->
 ```rust
-//! 更新客户端（设计文档第 6.6、9 节）：不带任何凭证和 Cookie，只能访问 GitHub 的三个域名，
-//! 只允许 HTTPS，跳转也只能在这三个域名之间。
+//! 更新客户端（设计文档第 6.6、9 节）：不带任何凭证和 Cookie，只能访问 GitHub 的两个域名，
+//! 只允许 HTTPS，跳转也只能在这两个域名之间。
+//! 查版本走网页的“最新发布”链接，不走 GitHub API：API 不登录时每个 IP 每小时只能请求 60 次，
+//! 共用出口 IP 的网络很容易用光。
 
 use std::path::Path;
 use std::time::Duration;
 
-use reqwest::header::{ACCEPT, HeaderValue};
+use reqwest::header::LOCATION;
 use reqwest::redirect::{Attempt, Policy};
 use sha2::{Digest, Sha256};
 use tokio::io::AsyncWriteExt;
 use url::Url;
 
 use crate::error::UpdateError;
-use crate::release::{self, Release};
+use crate::release::{self, REPO};
 use crate::version::Version;
 
 /// 允许访问的域名。下载会从 github.com 跳转到 release-assets.githubusercontent.com（2026-11-04 实测）。
-pub const HOSTS: [&str; 3] = [
-    "api.github.com",
-    "github.com",
-    "release-assets.githubusercontent.com",
-];
-const REPO: &str = "shulkx/mhy-carry";
-/// GitHub 接口要求带 User-Agent。只写程序名，不带版本和其他标识。
+pub const HOSTS: [&str; 2] = ["github.com", "release-assets.githubusercontent.com"];
+/// 只写程序名，不带版本和其他标识。
 const USER_AGENT: &str = "MhyCarry";
-const API_TIMEOUT: Duration = Duration::from_secs(10);
+/// 查版本、下载文件列表和签名，整个请求最多这么久。
+const TIMEOUT: Duration = Duration::from_secs(10);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
-/// 下载时这么久没收到数据就算失败。
+/// 下载程序时这么久没收到数据就算失败。
 const READ_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_REDIRECTS: usize = 5;
-const MAX_JSON: u64 = 1024 * 1024;
 /// `SHA256SUMS` 和签名的大小上限。
 pub(crate) const MAX_SMALL: u64 = 64 * 1024;
 /// 程序文件的大小上限。现在的 exe 约 16 MB。
 pub(crate) const MAX_PROGRAM: u64 = 64 * 1024 * 1024;
 
 pub struct UpdateClient {
+    /// 下载用：跳转只能在白名单之间。
     http: reqwest::Client,
-    api: Url,
+    /// 查最新版本用：不跟随跳转，只读跳转地址。
+    probe: reqwest::Client,
     site: Url,
     /// 测试时允许访问本地假服务器（http://127.0.0.1）。
     allow_local: bool,
@@ -535,16 +486,16 @@ pub struct UpdateClient {
 
 impl UpdateClient {
     pub fn new() -> Result<Self, UpdateError> {
-        Self::build("https://api.github.com", "https://github.com", false)
+        Self::build("https://github.com/", false)
     }
 
-    /// 接口和下载都指向本地假服务器。
+    /// 指向本地假服务器。
     #[cfg(test)]
     pub(crate) fn for_tests(base: &str) -> Self {
-        Self::build(base, base, true).expect("构建测试客户端")
+        Self::build(base, true).expect("构建测试客户端")
     }
 
-    fn build(api: &str, site: &str, allow_local: bool) -> Result<Self, UpdateError> {
+    fn build(site: &str, allow_local: bool) -> Result<Self, UpdateError> {
         let policy = Policy::custom(move |attempt: Attempt| {
             if attempt.previous().len() > MAX_REDIRECTS {
                 attempt.error("跳转次数太多")
@@ -563,29 +514,68 @@ impl UpdateClient {
             .https_only(!allow_local)
             .build()
             .map_err(UpdateError::network)?;
+        let probe = reqwest::Client::builder()
+            .user_agent(USER_AGENT)
+            .redirect(Policy::none())
+            .connect_timeout(CONNECT_TIMEOUT)
+            .timeout(TIMEOUT)
+            .https_only(!allow_local)
+            .build()
+            .map_err(UpdateError::network)?;
         Ok(Self {
             http,
-            api: parse_url(api)?,
-            site: parse_url(site)?,
+            probe,
+            site: Url::parse(site).map_err(|error| UpdateError::Format(error.to_string()))?,
             allow_local,
         })
     }
 
-    /// 查 GitHub 上最新的正式发布。
-    pub(crate) async fn latest(&self) -> Result<Option<Release>, UpdateError> {
-        let url = join(&self.api, &format!("repos/{REPO}/releases/latest"))?;
-        let body = self.get(url, MAX_JSON, true).await?;
-        release::parse_latest(&body).map_err(UpdateError::Format)
+    /// 查最新的正式版本：请求“最新发布”链接，不跟随跳转，从跳转地址里读出版本号。
+    pub(crate) async fn latest(&self) -> Result<Version, UpdateError> {
+        let url = self.join(&format!("{REPO}/releases/latest"))?;
+        self.ensure_allowed(&url)?;
+        let response = self
+            .probe
+            .get(url)
+            .send()
+            .await
+            .map_err(UpdateError::network)?;
+        let status = response.status();
+        if !status.is_redirection() {
+            return Err(if status.is_success() {
+                UpdateError::Format("没有跳转到最新发布".to_owned())
+            } else {
+                UpdateError::Status(status.as_u16())
+            });
+        }
+        let location = response
+            .headers()
+            .get(LOCATION)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default();
+        release::version_from_location(&self.site, location)
+            .ok_or_else(|| UpdateError::Format("最新发布的跳转地址不对".to_owned()))
     }
 
-    /// 下载 `version` 的一个小文件（文件列表、签名），整个读进内存。
+    /// 下载 `version` 的一个小文件（文件列表、签名），整个读进内存，超过 `limit` 就停。
     pub(crate) async fn fetch(
         &self,
         version: Version,
         file: &str,
         limit: u64,
     ) -> Result<Vec<u8>, UpdateError> {
-        self.get(self.asset(version, file)?, limit, false).await
+        let mut response = self.send(self.asset(version, file)?, Some(TIMEOUT)).await?;
+        if response.content_length().is_some_and(|length| length > limit) {
+            return Err(UpdateError::TooLarge(limit));
+        }
+        let mut body = Vec::new();
+        while let Some(chunk) = response.chunk().await.map_err(UpdateError::network)? {
+            if (body.len() + chunk.len()) as u64 > limit {
+                return Err(UpdateError::TooLarge(limit));
+            }
+            body.extend_from_slice(&chunk);
+        }
+        Ok(body)
     }
 
     /// 把 `version` 的 `file` 下载到 `path`，边下载边算 SHA256，返回小写十六进制的哈希。
@@ -613,7 +603,7 @@ impl UpdateClient {
         limit: u64,
         mut progress: impl FnMut(u64, Option<u64>),
     ) -> Result<String, UpdateError> {
-        let mut response = self.send(self.asset(version, file)?, false, None).await?;
+        let mut response = self.send(self.asset(version, file)?, None).await?;
         let total = response.content_length();
         if total.is_some_and(|total| total > limit) {
             return Err(UpdateError::TooLarge(limit));
@@ -635,33 +625,35 @@ impl UpdateClient {
         Ok(hex(&hasher.finalize()))
     }
 
-    /// 发布里某个文件的下载地址，由程序按版本号拼出，不用 GitHub 返回的地址。
+    /// 发布里某个文件的下载地址，由程序按版本号拼出。
     fn asset(&self, version: Version, file: &str) -> Result<Url, UpdateError> {
-        join(
-            &self.site,
-            &format!("{REPO}/releases/download/v{version}/{file}"),
-        )
+        self.join(&format!("{REPO}/releases/download/v{version}/{file}"))
+    }
+
+    fn join(&self, path: &str) -> Result<Url, UpdateError> {
+        self.site
+            .join(path)
+            .map_err(|error| UpdateError::Format(error.to_string()))
+    }
+
+    fn ensure_allowed(&self, url: &Url) -> Result<(), UpdateError> {
+        if allowed(url, self.allow_local) {
+            Ok(())
+        } else {
+            Err(UpdateError::Blocked(format!(
+                "不允许访问 {}",
+                url.host_str().unwrap_or_default()
+            )))
+        }
     }
 
     async fn send(
         &self,
         url: Url,
-        json: bool,
         timeout: Option<Duration>,
     ) -> Result<reqwest::Response, UpdateError> {
-        if !allowed(&url, self.allow_local) {
-            return Err(UpdateError::Blocked(format!(
-                "不允许访问 {}",
-                url.host_str().unwrap_or_default()
-            )));
-        }
+        self.ensure_allowed(&url)?;
         let mut request = self.http.get(url);
-        if json {
-            request = request.header(
-                ACCEPT,
-                HeaderValue::from_static("application/vnd.github+json"),
-            );
-        }
         if let Some(timeout) = timeout {
             request = request.timeout(timeout);
         }
@@ -670,22 +662,6 @@ impl UpdateClient {
             return Err(UpdateError::Status(response.status().as_u16()));
         }
         Ok(response)
-    }
-
-    /// 整个读进内存，超过 `limit` 就停。
-    async fn get(&self, url: Url, limit: u64, json: bool) -> Result<Vec<u8>, UpdateError> {
-        let mut response = self.send(url, json, Some(API_TIMEOUT)).await?;
-        if response.content_length().is_some_and(|length| length > limit) {
-            return Err(UpdateError::TooLarge(limit));
-        }
-        let mut body = Vec::new();
-        while let Some(chunk) = response.chunk().await.map_err(UpdateError::network)? {
-            if (body.len() + chunk.len()) as u64 > limit {
-                return Err(UpdateError::TooLarge(limit));
-            }
-            body.extend_from_slice(&chunk);
-        }
-        Ok(body)
     }
 }
 
@@ -700,15 +676,6 @@ fn allowed(url: &Url, allow_local: bool) -> bool {
         "http" => allow_local && host == "127.0.0.1",
         _ => false,
     }
-}
-
-fn parse_url(text: &str) -> Result<Url, UpdateError> {
-    Url::parse(text).map_err(|error| UpdateError::Format(error.to_string()))
-}
-
-fn join(base: &Url, path: &str) -> Result<Url, UpdateError> {
-    base.join(path)
-        .map_err(|error| UpdateError::Format(error.to_string()))
 }
 
 fn hex(bytes: &[u8]) -> String {
@@ -726,12 +693,13 @@ mod tests {
         minor: 4,
         patch: 1,
     };
+    const LATEST_PATH: &str = "/shulkx/mhy-carry/releases/latest";
     const SUMS_PATH: &str = "/shulkx/mhy-carry/releases/download/v0.4.1/SHA256SUMS";
 
     #[test]
     fn only_github_hosts_over_https_are_allowed() {
         for url in [
-            "https://api.github.com/repos/shulkx/mhy-carry/releases/latest",
+            "https://github.com/shulkx/mhy-carry/releases/latest",
             "https://github.com/shulkx/mhy-carry/releases/download/v0.4.1/SHA256SUMS",
             "https://release-assets.githubusercontent.com/github-production-release-asset/1",
         ] {
@@ -739,6 +707,7 @@ mod tests {
         }
         for url in [
             "http://github.com/x",
+            "https://api.github.com/repos/shulkx/mhy-carry/releases/latest",
             "https://evil.cn/x",
             "https://github.com.evil.cn/x",
             "https://objects.githubusercontent.com/x",
@@ -755,42 +724,63 @@ mod tests {
     async fn requests_outside_the_whitelist_are_not_sent() {
         let client = UpdateClient::new().unwrap();
         for url in ["https://evil.cn/x", "http://github.com/x"] {
-            let result = client.send(Url::parse(url).unwrap(), false, None).await;
+            let result = client.send(Url::parse(url).unwrap(), None).await;
             assert!(matches!(result, Err(UpdateError::Blocked(_))), "{url}: {result:?}");
         }
     }
 
     #[tokio::test]
-    async fn latest_release_comes_from_the_api_without_credentials() {
+    async fn latest_version_comes_from_the_redirect_without_credentials() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
-            .and(path("/repos/shulkx/mhy-carry/releases/latest"))
-            .and(header("accept", "application/vnd.github+json"))
+            .and(path(LATEST_PATH))
             .and(header("user-agent", "MhyCarry"))
-            .respond_with(ResponseTemplate::new(200).set_body_string(
-                r#"{"tag_name":"v0.4.1","draft":false,"prerelease":false,"assets":[{"name":"SHA256SUMS"},{"name":"SHA256SUMS.minisig"},{"name":"MhyCarry_0.4.1_x64-portable.exe"}]}"#,
+            .respond_with(ResponseTemplate::new(302).insert_header(
+                "location",
+                format!("{}/shulkx/mhy-carry/releases/tag/v0.4.1", server.uri()),
             ))
             .mount(&server)
             .await;
-        let release = UpdateClient::for_tests(&server.uri()).latest().await.unwrap();
-        assert_eq!(
-            release,
-            Some(Release {
-                version: V041,
-                installable: true
-            })
-        );
+        // 不跟随跳转：发布页面本身不会被请求。
+        Mock::given(path("/shulkx/mhy-carry/releases/tag/v0.4.1"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(0)
+            .mount(&server)
+            .await;
+        let version = UpdateClient::for_tests(&server.uri()).latest().await.unwrap();
+        assert_eq!(version, V041);
         let requests = server.received_requests().await.unwrap();
+        assert_eq!(requests.len(), 1);
         for name in ["cookie", "authorization", "referer"] {
             assert!(!requests[0].headers.contains_key(name), "{name}");
         }
     }
 
     #[tokio::test]
-    async fn http_errors_are_reported() {
+    async fn latest_without_a_proper_redirect_is_an_error() {
         let server = MockServer::start().await;
-        let result = UpdateClient::for_tests(&server.uri()).latest().await;
+        let client = UpdateClient::for_tests(&server.uri());
+        // 没有这个页面。
+        let result = client.latest().await;
         assert!(matches!(result, Err(UpdateError::Status(404))), "{result:?}");
+
+        Mock::given(path(LATEST_PATH))
+            .respond_with(
+                ResponseTemplate::new(302)
+                    .insert_header("location", "https://evil.cn/shulkx/mhy-carry/releases/tag/v0.4.1"),
+            )
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+        let result = client.latest().await;
+        assert!(matches!(result, Err(UpdateError::Format(_))), "{result:?}");
+
+        Mock::given(path(LATEST_PATH))
+            .respond_with(ResponseTemplate::new(200).set_body_string("<html></html>"))
+            .mount(&server)
+            .await;
+        let result = client.latest().await;
+        assert!(matches!(result, Err(UpdateError::Format(_))), "{result:?}");
     }
 
     #[tokio::test]
@@ -903,20 +893,7 @@ mod tests {
 }
 ```
 
-- [ ] **步骤 1：** 写入 `client.rs`。`lib.rs` 加 `mod client;`、`pub use client::UpdateClient;`，并在末尾加：
-
-```rust
-/// 查有没有比 `current` 新的正式版本。
-pub async fn check(
-    client: &UpdateClient,
-    current: Version,
-) -> Result<Option<Release>, UpdateError> {
-    Ok(client
-        .latest()
-        .await?
-        .filter(|release| release.version > current))
-}
-```
+- [ ] **步骤 1：** 写入 `client.rs`，`lib.rs` 加 `mod client;`、`pub use client::UpdateClient;`。`check` 要用到任务 5 的签名核对，到任务 5 再加。
 
 - [ ] **步骤 2：运行** `cargo test -p mhy-carry-update client::`，预期全部通过。
 - [ ] **步骤 3：提交** `update: 只能访问 GitHub 的更新客户端`
@@ -1223,15 +1200,49 @@ pub use error::UpdateError;
 pub use release::{Release, release_page};
 pub use version::Version;
 
-/// 查有没有比 `current` 新的正式版本。
+/// 查有没有比 `current` 新的正式版本（第 6.6 节“检查”）。有新版本时，再下载它的文件列表和签名
+/// 核对一遍：对得上才能自动更新；没有签名（v0.3.1 和更早的版本）或者对不上，只能到发布页面
+/// 手动下载。
 pub async fn check(
     client: &UpdateClient,
     current: Version,
 ) -> Result<Option<Release>, UpdateError> {
-    Ok(client
-        .latest()
-        .await?
-        .filter(|release| release.version > current))
+    check_with(client, &verify::official_key()?, current).await
+}
+
+async fn check_with(
+    client: &UpdateClient,
+    key: &PublicKey,
+    current: Version,
+) -> Result<Option<Release>, UpdateError> {
+    let version = client.latest().await?;
+    if version <= current {
+        return Ok(None);
+    }
+    let installable = match signed_hash(client, key, version).await {
+        Ok(_) => true,
+        Err(UpdateError::Status(404) | UpdateError::Verify(_)) => false,
+        Err(error) => return Err(error),
+    };
+    Ok(Some(Release {
+        version,
+        installable,
+    }))
+}
+
+/// 下载 `version` 的文件列表和签名，核对后返回免安装版 exe 的 SHA256。
+async fn signed_hash(
+    client: &UpdateClient,
+    key: &PublicKey,
+    version: Version,
+) -> Result<String, UpdateError> {
+    let sums = client
+        .fetch(version, release::SUMS, client::MAX_SMALL)
+        .await?;
+    let signature = client
+        .fetch(version, release::SUMS_SIGNATURE, client::MAX_SMALL)
+        .await?;
+    verify::expected_hash(key, &sums, &signature, &release::program_file(version))
 }
 
 /// 下载并核对 `version`，放到 `exe` 旁边的 `.new`，返回它的路径（第 6.6 节“更新”第 1–3 步）。
@@ -1252,17 +1263,16 @@ async fn download_with(
     exe: &Path,
     progress: impl FnMut(u64, Option<u64>),
 ) -> Result<PathBuf, UpdateError> {
-    let sums = client
-        .fetch(version, release::SUMS, client::MAX_SMALL)
-        .await?;
-    let signature = client
-        .fetch(version, release::SUMS_SIGNATURE, client::MAX_SMALL)
-        .await?;
-    let file = release::program_file(version);
-    let expected = verify::expected_hash(key, &sums, &signature, &file)?;
+    let expected = signed_hash(client, key, version).await?;
     let staged = install::staged_path(exe);
     let actual = client
-        .download(version, &file, &staged, client::MAX_PROGRAM, progress)
+        .download(
+            version,
+            &release::program_file(version),
+            &staged,
+            client::MAX_PROGRAM,
+            progress,
+        )
         .await?;
     if actual != expected {
         let _ = std::fs::remove_file(&staged);
@@ -1289,6 +1299,10 @@ mod tests {
     const PROGRAM: &[u8] = b"MhyCarry 0.4.1";
     const BASE: &str = "/shulkx/mhy-carry/releases/download/v0.4.1/";
 
+    fn parse(text: &str) -> Version {
+        Version::parse(text).unwrap()
+    }
+
     fn hex(bytes: &[u8]) -> String {
         Sha256::digest(bytes)
             .iter()
@@ -1304,15 +1318,25 @@ mod tests {
         )
     }
 
-    /// 假的 v0.4.1 发布：用 `key` 签过名的 `sums`，以及实际提供下载的程序 `program`。
-    async fn release(key: &TestKey, sums: String, program: &[u8]) -> MockServer {
+    /// 假的 GitHub：最新发布是 v0.4.1，文件列表 `sums` 用 `key` 签名（`None` 表示没有签名文件），
+    /// 实际提供下载的程序是 `program`。
+    async fn release(key: Option<&TestKey>, sums: String, program: &[u8]) -> MockServer {
         let server = MockServer::start().await;
-        let signature = key.sign(sums.as_bytes());
-        for (name, body) in [
-            ("SHA256SUMS", sums.into_bytes()),
-            ("SHA256SUMS.minisig", signature),
+        Mock::given(path("/shulkx/mhy-carry/releases/latest"))
+            .respond_with(ResponseTemplate::new(302).insert_header(
+                "location",
+                format!("{}/shulkx/mhy-carry/releases/tag/v0.4.1", server.uri()),
+            ))
+            .mount(&server)
+            .await;
+        let mut files = vec![
+            ("SHA256SUMS", sums.clone().into_bytes()),
             ("MhyCarry_0.4.1_x64-portable.exe", program.to_vec()),
-        ] {
+        ];
+        if let Some(key) = key {
+            files.push(("SHA256SUMS.minisig", key.sign(sums.as_bytes())));
+        }
+        for (name, body) in files {
             Mock::given(path(format!("{BASE}{name}")))
                 .respond_with(ResponseTemplate::new(200).set_body_bytes(body))
                 .mount(&server)
@@ -1321,10 +1345,97 @@ mod tests {
         server
     }
 
+    async fn requested_paths(server: &MockServer) -> Vec<String> {
+        server
+            .received_requests()
+            .await
+            .unwrap()
+            .iter()
+            .map(|request| request.url.path().to_owned())
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn newer_signed_releases_can_be_installed() {
+        let key = TestKey::new();
+        let server = release(Some(&key), sums_for(PROGRAM), PROGRAM).await;
+        let client = UpdateClient::for_tests(&server.uri());
+        let release = check_with(&client, &key.public(), parse("0.4.0"))
+            .await
+            .unwrap();
+        assert_eq!(
+            release,
+            Some(Release {
+                version: V041,
+                installable: true
+            })
+        );
+        // 检查时只下载文件列表和签名，不下载程序。
+        let paths = requested_paths(&server).await;
+        assert!(!paths.iter().any(|path| path.ends_with(".exe")), "{paths:?}");
+    }
+
+    #[tokio::test]
+    async fn unsigned_or_wrongly_signed_releases_can_only_be_downloaded_by_hand() {
+        let key = TestKey::new();
+        for server in [
+            release(None, sums_for(PROGRAM), PROGRAM).await,
+            release(Some(&TestKey::new()), sums_for(PROGRAM), PROGRAM).await,
+        ] {
+            let client = UpdateClient::for_tests(&server.uri());
+            let release = check_with(&client, &key.public(), parse("0.4.0"))
+                .await
+                .unwrap();
+            assert_eq!(
+                release,
+                Some(Release {
+                    version: V041,
+                    installable: false
+                })
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn no_newer_version_means_nothing_else_is_downloaded() {
+        let key = TestKey::new();
+        let server = release(Some(&key), sums_for(PROGRAM), PROGRAM).await;
+        let client = UpdateClient::for_tests(&server.uri());
+        for current in ["0.4.1", "0.5.0"] {
+            assert_eq!(
+                check_with(&client, &key.public(), parse(current))
+                    .await
+                    .unwrap(),
+                None
+            );
+        }
+        let paths = requested_paths(&server).await;
+        assert!(!paths.iter().any(|path| path.contains("/download/")), "{paths:?}");
+    }
+
+    #[tokio::test]
+    async fn network_errors_while_checking_the_signature_are_errors() {
+        let server = MockServer::start().await;
+        Mock::given(path("/shulkx/mhy-carry/releases/latest"))
+            .respond_with(ResponseTemplate::new(302).insert_header(
+                "location",
+                format!("{}/shulkx/mhy-carry/releases/tag/v0.4.1", server.uri()),
+            ))
+            .mount(&server)
+            .await;
+        Mock::given(path(format!("{BASE}SHA256SUMS")))
+            .respond_with(ResponseTemplate::new(503))
+            .mount(&server)
+            .await;
+        let client = UpdateClient::for_tests(&server.uri());
+        let result = check_with(&client, &TestKey::new().public(), parse("0.4.0")).await;
+        assert!(matches!(result, Err(UpdateError::Status(503))), "{result:?}");
+    }
+
     #[tokio::test]
     async fn signed_programs_are_downloaded_next_to_the_exe() {
         let key = TestKey::new();
-        let server = release(&key, sums_for(PROGRAM), PROGRAM).await;
+        let server = release(Some(&key), sums_for(PROGRAM), PROGRAM).await;
         let dir = tempfile::tempdir().unwrap();
         let exe = dir.path().join("MhyCarry.exe");
         let client = UpdateClient::for_tests(&server.uri());
@@ -1338,7 +1449,7 @@ mod tests {
     #[tokio::test]
     async fn programs_that_differ_from_the_signed_hash_are_deleted() {
         let key = TestKey::new();
-        let server = release(&key, sums_for(PROGRAM), b"something else").await;
+        let server = release(Some(&key), sums_for(PROGRAM), b"something else").await;
         let dir = tempfile::tempdir().unwrap();
         let exe = dir.path().join("MhyCarry.exe");
         let client = UpdateClient::for_tests(&server.uri());
@@ -1349,39 +1460,15 @@ mod tests {
 
     #[tokio::test]
     async fn other_keys_stop_before_the_program_is_downloaded() {
-        let server = release(&TestKey::new(), sums_for(PROGRAM), PROGRAM).await;
+        let server = release(Some(&TestKey::new()), sums_for(PROGRAM), PROGRAM).await;
         let dir = tempfile::tempdir().unwrap();
         let exe = dir.path().join("MhyCarry.exe");
         let client = UpdateClient::for_tests(&server.uri());
         let result = download_with(&client, &TestKey::new().public(), V041, &exe, |_, _| {}).await;
         assert!(matches!(result, Err(UpdateError::Verify(_))), "{result:?}");
         assert!(!install::staged_path(&exe).exists());
-        let requested: Vec<String> = server
-            .received_requests()
-            .await
-            .unwrap()
-            .iter()
-            .map(|request| request.url.path().to_owned())
-            .collect();
-        assert!(!requested.iter().any(|path| path.ends_with(".exe")), "{requested:?}");
-    }
-
-    #[tokio::test]
-    async fn only_newer_versions_count() {
-        let server = MockServer::start().await;
-        Mock::given(path("/repos/shulkx/mhy-carry/releases/latest"))
-            .respond_with(ResponseTemplate::new(200).set_body_string(
-                r#"{"tag_name":"v0.4.1","draft":false,"prerelease":false,"assets":[]}"#,
-            ))
-            .mount(&server)
-            .await;
-        let client = UpdateClient::for_tests(&server.uri());
-        let parse = |text| Version::parse(text).unwrap();
-        let newer = check(&client, parse("0.4.0")).await.unwrap().unwrap();
-        assert_eq!(newer.version, V041);
-        assert!(!newer.installable);
-        assert_eq!(check(&client, parse("0.4.1")).await.unwrap(), None);
-        assert_eq!(check(&client, parse("0.5.0")).await.unwrap(), None);
+        let paths = requested_paths(&server).await;
+        assert!(!paths.iter().any(|path| path.ends_with(".exe")), "{paths:?}");
     }
 }
 ```
@@ -2190,7 +2277,7 @@ $("setting-check-updates").addEventListener("change", async () => {
 ```
 
   - “核对下载的文件”末尾加一句：`SHA256SUMS.minisig` 是自动更新用的签名。
-  - “声明”里“没有遥测，不连其他服务器。”前面加：`- 检查更新时会连接 GitHub（\`api.github.com\`、\`github.com\`、\`release-assets.githubusercontent.com\`），只发送程序名，不带任何标识；可以在设置里关掉。`
+  - “声明”里“没有遥测，不连其他服务器。”前面加：`- 检查更新时会连接 GitHub（\`github.com\`、\`release-assets.githubusercontent.com\`），只发送程序名，不带任何标识；可以在设置里关掉。`
 - [ ] **CLAUDE.md：**
   - 进度：加“2026-11-04 加了检查更新和自动更新（设计文档第 6.6 节，计划 docs/plans/2026-11-04-auto-update-plan.md），还没发布”。
   - “米哈游接口”的网络白名单那一条：直播客户端、更新客户端各有自己的白名单，改它们同样要改设计文档并告诉用户。
@@ -2240,3 +2327,10 @@ $env:MHY_CARRY_SIGNED_DIR = "<临时文件夹>"; cargo test -p mhy-carry-update 
 ---
 
 ## 执行记录
+
+- **任务 3、5：查版本改走网页跳转**（2026-11-04 和用户确认）。
+  - 原计划查 GitHub API `releases/latest`。任务 8 远程调试时，手动检查返回 403：不登录的 API 每个 IP 每小时只能请求 60 次，本机所在网络的出口 IP 已经用光了。用户的网络如果也共用出口 IP，会经常查不到新版本，而且打开程序时查失败不提示，用户不会知道。
+  - 改成请求网页上的“最新发布”链接 `github.com/shulkx/mhy-carry/releases/latest`，不跟随跳转，从 302 的跳转地址里读版本号。实测约 0.6 秒，不受 API 次数限制。
+  - 能不能自动更新，原来看发布里有没有那几个文件，现在改成下载 `SHA256SUMS` 和签名、真的核对一遍。没有签名文件时 GitHub 返回 404，算作只能手动下载。
+  - 白名单去掉 `api.github.com`，只剩两个域名；`update` 包不再用 `serde`、`serde_json`。
+  - 设计文档第 6.6、9、11 节和计划里 `release.rs`、`client.rs`、`lib.rs` 的代码已经跟着改了。
