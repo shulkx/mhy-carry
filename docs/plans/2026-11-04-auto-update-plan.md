@@ -54,7 +54,7 @@ gh secret set UPDATE_SIGNING_PASSWORD -R shulkx/mhy-carry
 
 **文件：** 修改 `crates/core/src/settings.rs`
 
-- [ ] **步骤 1：** `Settings` 的 `scan` 字段后面加：
+- [x] **步骤 1：** `Settings` 的 `scan` 字段后面加：
 
 ```rust
     /// 检查更新（设计文档第 6.6 节）。v0.4 之前的文件没有这一块，读的时候用默认值。
@@ -84,7 +84,7 @@ impl Default for UpdateSettings {
 
 `load_or_init` 里新建设置时，`scan: ScanSettings::default(),` 后面加 `update: UpdateSettings::default(),`。
 
-- [ ] **步骤 2：** 测试模块里 `files_from_m1_get_default_scan_settings` 后面加：
+- [x] **步骤 2：** 测试模块里 `files_from_m1_get_default_scan_settings` 后面加：
 
 ```rust
     #[test]
@@ -113,8 +113,8 @@ impl Default for UpdateSettings {
     }
 ```
 
-- [ ] **步骤 3：运行** `cargo test -p mhy-carry-core settings::`，预期全部通过。
-- [ ] **步骤 4：提交** `core: 设置里加打开程序时检查更新`
+- [x] **步骤 3：运行** `cargo test -p mhy-carry-core settings::`，预期全部通过。
+- [x] **步骤 4：提交** `core: 设置里加打开程序时检查更新`
 
 ### 任务 2：`update` 包：版本号、最新发布、错误
 
@@ -124,7 +124,7 @@ impl Default for UpdateSettings {
 - 修改 `Cargo.toml`（workspace）；
 - 新建 `crates/update/Cargo.toml`、`src/lib.rs`、`src/version.rs`、`src/release.rs`、`src/error.rs`。
 
-- [ ] **步骤 1：** workspace 的 `[workspace.dependencies]`：
+- [x] **步骤 1：** workspace 的 `[workspace.dependencies]`：
   - `mhy-carry-live = …` 后面加 `mhy-carry-update = { path = "crates/update" }`；
   - `jiff = …` 后面加：
 
@@ -162,7 +162,7 @@ tempfile.workspace = true
 wiremock.workspace = true
 ```
 
-- [ ] **步骤 2：版本号**
+- [x] **步骤 2：版本号**
 
 <!-- file: crates/update/src/version.rs -->
 ```rust
@@ -252,7 +252,7 @@ mod tests {
 }
 ```
 
-- [ ] **步骤 3：最新发布**
+- [x] **步骤 3：最新发布**
 
 <!-- file: crates/update/src/release.rs -->
 ```rust
@@ -357,7 +357,7 @@ mod tests {
 }
 ```
 
-- [ ] **步骤 4：错误**
+- [x] **步骤 4：错误**
 
 <!-- file: crates/update/src/error.rs -->
 ```rust
@@ -416,7 +416,7 @@ mod tests {
 }
 ```
 
-- [ ] **步骤 5：** `lib.rs` 先写成：
+- [x] **步骤 5：** `lib.rs` 先写成：
 
 ```rust
 //! 检查更新和自动更新（设计文档第 6.6 节）：查 GitHub 上的最新发布，下载、核对新版本，
@@ -432,8 +432,8 @@ pub use release::{Release, release_page};
 pub use version::Version;
 ```
 
-- [ ] **步骤 6：运行** `cargo test -p mhy-carry-update`，预期全部通过；`cargo deny check` 通过。
-- [ ] **步骤 7：提交** `update: 版本号和最新发布`
+- [x] **步骤 6：运行** `cargo test -p mhy-carry-update`，预期全部通过；`cargo deny check` 通过。
+- [x] **步骤 7：提交** `update: 版本号和最新发布`
 
 ### 任务 3：更新客户端
 
@@ -893,10 +893,10 @@ mod tests {
 }
 ```
 
-- [ ] **步骤 1：** 写入 `client.rs`，`lib.rs` 加 `mod client;`、`pub use client::UpdateClient;`。`check` 要用到任务 5 的签名核对，到任务 5 再加。
+- [x] **步骤 1：** 写入 `client.rs`，`lib.rs` 加 `mod client;`、`pub use client::UpdateClient;`。`check` 要用到任务 5 的签名核对，到任务 5 再加。
 
-- [ ] **步骤 2：运行** `cargo test -p mhy-carry-update client::`，预期全部通过。
-- [ ] **步骤 3：提交** `update: 只能访问 GitHub 的更新客户端`
+- [x] **步骤 2：运行** `cargo test -p mhy-carry-update client::`，预期全部通过。
+- [x] **步骤 3：提交** `update: 只能访问 GitHub 的更新客户端`
 
 ### 任务 4：换掉正在运行的程序
 
@@ -1012,8 +1012,8 @@ mod tests {
 }
 ```
 
-- [ ] **步骤 1：运行** `cargo test -p mhy-carry-update install::`，预期全部通过。
-- [ ] **步骤 2：提交** `update: 换掉正在运行的程序`
+- [x] **步骤 1：运行** `cargo test -p mhy-carry-update install::`，预期全部通过。
+- [x] **步骤 2：提交** `update: 换掉正在运行的程序`
 
 ### 任务 5：签名核对和下载新版本
 
@@ -1021,7 +1021,7 @@ mod tests {
 - 新建 `crates/update/update.pub`（用户生成的公钥）、`crates/update/src/verify.rs`；
 - `lib.rs` 换成全文。
 
-- [ ] **步骤 1：公钥。** 用户的公钥文件是 base64 包着的 minisign 公钥。解开后写进 `crates/update/update.pub`（两行：`untrusted comment: minisign public key: …` 和 `RW…`），LF 换行。
+- [x] **步骤 1：公钥。** 用户的公钥文件是 base64 包着的 minisign 公钥。解开后写进 `crates/update/update.pub`（两行：`untrusted comment: minisign public key: …` 和 `RW…`），LF 换行。
 
 ```bash
 base64 -d "$USERPROFILE/.mhycarry-signing/update.key.pub" > crates/update/update.pub
@@ -1473,8 +1473,8 @@ mod tests {
 }
 ```
 
-- [ ] **步骤 2：运行** `cargo test -p mhy-carry-update`，预期全部通过（`verifies_a_signature_made_in_ci` 默认忽略）。
-- [ ] **步骤 3：提交** `update: 核对签名、下载新版本`（带上 `update.pub`）
+- [x] **步骤 2：运行** `cargo test -p mhy-carry-update`，预期全部通过（`verifies_a_signature_made_in_ci` 默认忽略）。
+- [x] **步骤 3：提交** `update: 核对签名、下载新版本`（带上 `update.pub`）
 
 ### 任务 6：注册表里的版本号、打开发布页面（`platform`）
 
@@ -1483,7 +1483,7 @@ mod tests {
 - 新建 `crates/platform/src/install.rs`、`crates/platform/src/shell.rs`；
 - `lib.rs` 加两个模块。
 
-- [ ] **步骤 1：** `crates/platform/src/lib.rs` 的说明改成“和操作系统打交道的部分：数据目录、窗口枚举、截图、直播画面解码，以及自动更新用到的注册表和浏览器。除了数据目录都只有 Windows 实现。”，`pub mod console;` 前面加：
+- [x] **步骤 1：** `crates/platform/src/lib.rs` 的说明改成“和操作系统打交道的部分：数据目录、窗口枚举、截图、直播画面解码，以及自动更新用到的注册表和浏览器。除了数据目录都只有 Windows 实现。”，`pub mod console;` 前面加：
 
 ```rust
 #[cfg(windows)]
@@ -1670,8 +1670,8 @@ pub fn open_in_browser(url: &str) -> Result<(), String> {
 }
 ```
 
-- [ ] **步骤 2：运行** `cargo test -p mhy-carry-platform install::`，预期全部通过；跑完后 `reg query HKCU\Software` 里没有 `MhyCarryTest-*`。
-- [ ] **步骤 3：提交** `platform: 安装版的版本号和打开发布页面`
+- [x] **步骤 2：运行** `cargo test -p mhy-carry-platform install::`，预期全部通过；跑完后 `reg query HKCU\Software` 里没有 `MhyCarryTest-*`。
+- [x] **步骤 3：提交** `platform: 安装版的版本号和打开发布页面`
 
 ### 任务 7：应用的状态和命令
 
@@ -1679,7 +1679,7 @@ pub fn open_in_browser(url: &str) -> Result<(), String> {
 - 修改 `app/src-tauri/Cargo.toml`（加 `mhy-carry-update.workspace = true`）、`state.rs`、`model.rs`、`commands.rs`、`main.rs`、`build.rs`、`capabilities/main.json`；
 - 新建 `app/src-tauri/src/updater.rs`。
 
-- [ ] **步骤 1：`state.rs`**
+- [x] **步骤 1：`state.rs`**
   - `AppState` 的 `leftovers` 后面加：
 
 ```rust
@@ -1790,7 +1790,7 @@ impl UpdateView {
     }
 ```
 
-- [ ] **步骤 2：`model.rs`**
+- [x] **步骤 2：`model.rs`**
   - `use crate::state::{…}` 加 `UpdateView`；
   - `Model` 的 `notice_at` 后面加 `pub update: UpdateView,`，`Shared::load` 里初始化成 `update: UpdateView::Idle,`；
   - `ensure_idle` 的绑定检查后面加：
@@ -1946,7 +1946,7 @@ async fn download(
 }
 ```
 
-- [ ] **步骤 3：`commands.rs`**
+- [x] **步骤 3：`commands.rs`**
   - `use` 里加 `use mhy_carry_update::{Version, release_page};`，`use crate::state::{…}` 加 `UpdateView`，`use crate::{bind, scan};` 改成 `use crate::{bind, scan, updater};`；
   - `scan_start` 里 `if model.bind.in_progress() { … }` 后面加：
 
@@ -2020,7 +2020,7 @@ pub fn set_check_updates(app: AppHandle, on: bool) -> CommandResult {
 }
 ```
 
-- [ ] **步骤 4：`main.rs`**
+- [x] **步骤 4：`main.rs`**
   - `mod state;` 后面加 `mod updater;`；
   - `setup` 里 `app.manage(…)?;` 后面加 `updater::on_start(app.handle());`；
   - `generate_handler!` 末尾加 `commands::check_update, commands::install_update, commands::open_release_page, commands::set_check_updates,`；
@@ -2038,15 +2038,15 @@ pub fn set_check_updates(app: AppHandle, on: bool) -> CommandResult {
     }
 ```
 
-- [ ] **步骤 5：** `build.rs` 的命令列表末尾加 `"check_update", "install_update", "open_release_page", "set_check_updates",`；`capabilities/main.json` 末尾加 `"allow-check-update", "allow-install-update", "allow-open-release-page", "allow-set-check-updates"`。
-- [ ] **步骤 6：运行** `cargo clippy -p mhy-carry --all-targets -- -D warnings` 和 `cargo test -p mhy-carry`，预期通过；`permissions/autogenerated/` 多出四个 `.toml`，一起提交。
-- [ ] **步骤 7：** 和任务 8 一起提交。
+- [x] **步骤 5：** `build.rs` 的命令列表末尾加 `"check_update", "install_update", "open_release_page", "set_check_updates",`；`capabilities/main.json` 末尾加 `"allow-check-update", "allow-install-update", "allow-open-release-page", "allow-set-check-updates"`。
+- [x] **步骤 6：运行** `cargo clippy -p mhy-carry --all-targets -- -D warnings` 和 `cargo test -p mhy-carry`，预期通过；`permissions/autogenerated/` 多出四个 `.toml`，一起提交。
+- [x] **步骤 7：** 和任务 8 一起提交。
 
 ### 任务 8：界面
 
 **文件：** 修改 `app/ui/index.html`、`style.css`、`main.js`。
 
-- [ ] **步骤 1：`index.html`**
+- [x] **步骤 1：`index.html`**
   - `<main class="content">` 下面第一行加：
 
 ```html
@@ -2065,7 +2065,7 @@ pub fn set_check_updates(app: AppHandle, on: bool) -> CommandResult {
       <span class="update-check"><span id="current-version"></span><button type="button" class="btn small" id="check-update">检查更新</button><span class="meta" id="update-result" aria-live="polite"></span></span>
 ```
 
-- [ ] **步骤 2：`style.css`** 在 `details.settings` 前面加：
+- [x] **步骤 2：`style.css`** 在 `details.settings` 前面加：
 
 ```css
 .update-bar {
@@ -2091,7 +2091,7 @@ pub fn set_check_updates(app: AppHandle, on: bool) -> CommandResult {
 .update-check { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
 ```
 
-- [ ] **步骤 3：`main.js`**
+- [x] **步骤 3：`main.js`**
   - `const MAX_NOTE_CHARS = 20;` 后面加：
 
 ```js
@@ -2180,8 +2180,8 @@ $("setting-check-updates").addEventListener("change", async () => {
 });
 ```
 
-- [ ] **步骤 4：检查** `node --check app/ui/main.js`。
-- [ ] **步骤 5：远程调试检查**（临时数据目录、假账号，`m8check/` 里的脚本）：
+- [x] **步骤 4：检查** `node --check app/ui/main.js`。
+- [x] **步骤 5：远程调试检查**（临时数据目录、假账号，`m8check/` 里的脚本）：
   - 打开程序后设置里显示当前版本。启动时会真的去 GitHub 查一次：本地版本和最新发布一样时，结果是空的，提示条不出现。
   - 点“检查更新”显示“正在检查…”，然后是“已是最新版本”。
   - 用假快照依次显示几种状态，核对提示条的文字和按钮：能自动更新、只能手动下载、下载中、安装中、要手动重启、更新失败；再核对检查失败只显示在设置里。
@@ -2190,13 +2190,13 @@ $("setting-check-updates").addEventListener("change", async () => {
     - 没有新版本时 `install_update` 返回“没有可以自动安装的新版本。”；
     - 关掉“打开程序时检查”后 `settings.json` 里是 `false`，重启后不再查。
   - 深色主题下提示条看得清。
-- [ ] **步骤 6：提交** `app: 检查更新和自动更新`
+- [x] **步骤 6：提交** `app: 检查更新和自动更新`
 
 ### 任务 9：发布流程签名（`release.yml`、`ci.yml`）
 
 **文件：** 修改 `.github/workflows/release.yml`、`ci.yml`。
 
-- [ ] **步骤 1：`release.yml`**
+- [x] **步骤 1：`release.yml`**
   - `build` job 后面加：
 
 ```yaml
@@ -2258,12 +2258,12 @@ $("setting-check-updates").addEventListener("change", async () => {
   - 发布说明的下载列表末尾加一行 `- \`SHA256SUMS.minisig\`：自动更新用的签名，程序只装签名对得上的文件。`。
   - 文件开头的说明：手动运行时也会签名，用来在打 tag 之前试跑签名。
 
-- [ ] **步骤 2：`ci.yml`** 的 `test-portable` 加 `-p mhy-carry-update`。
-- [ ] **步骤 3：提交** `ci: 发布时给 SHA256SUMS 签名`
+- [x] **步骤 2：`ci.yml`** 的 `test-portable` 加 `-p mhy-carry-update`。
+- [x] **步骤 3：提交** `ci: 发布时给 SHA256SUMS 签名`
 
 ### 任务 10：文档
 
-- [ ] **README：**
+- [x] **README：**
   - “使用”里“多个账号”后面加一节“更新”：
 
 ```markdown
@@ -2278,18 +2278,18 @@ $("setting-check-updates").addEventListener("change", async () => {
 
   - “核对下载的文件”末尾加一句：`SHA256SUMS.minisig` 是自动更新用的签名。
   - “声明”里“没有遥测，不连其他服务器。”前面加：`- 检查更新时会连接 GitHub（\`github.com\`、\`release-assets.githubusercontent.com\`），只发送程序名，不带任何标识；可以在设置里关掉。`
-- [ ] **CLAUDE.md：**
+- [x] **CLAUDE.md：**
   - 进度：加“2026-11-04 加了检查更新和自动更新（设计文档第 6.6 节，计划 docs/plans/2026-11-04-auto-update-plan.md），还没发布”。
   - “米哈游接口”的网络白名单那一条：直播客户端、更新客户端各有自己的白名单，改它们同样要改设计文档并告诉用户。
   - 安全红线：更新签名的私钥和密码只在用户本机和仓库的 Actions secrets 里，不读、不贴进聊天、不提交。
   - 常用命令加核对 CI 签名的联网测试。
-- [ ] **提交** `docs: 检查更新和自动更新的使用说明`，推送，等 CI。
+- [x] **提交** `docs: 检查更新和自动更新的使用说明`，推送，等 CI。
 
 ### 任务 11：试跑签名（需要用户已经设置好 secrets）
 
-- [ ] 手动运行发布流程：`gh workflow run release.yml --ref main`。只构建和签名，不生成构建来源证明，也不发布。
-- [ ] 等它跑完，`sign` job 里“用仓库里的公钥核对签名”通过。
-- [ ] `gh run download <运行 ID> -n dist -n signature -D <临时文件夹>`，再运行：
+- [x] 手动运行发布流程：`gh workflow run release.yml --ref main`。只构建和签名，不生成构建来源证明，也不发布。
+- [x] 等它跑完，`sign` job 里“用仓库里的公钥核对签名”通过。
+- [x] `gh run download <运行 ID> -n dist -n signature -D <临时文件夹>`，再运行：
 
 ```powershell
 $env:MHY_CARRY_SIGNED_DIR = "<临时文件夹>"; cargo test -p mhy-carry-update -- --ignored --nocapture verifies_a_signature_made_in_ci
@@ -2299,14 +2299,14 @@ $env:MHY_CARRY_SIGNED_DIR = "<临时文件夹>"; cargo test -p mhy-carry-update 
 
 ### 任务 12：独立审查
 
-- [ ] 派一个子代理只读审查这批改动，重点：
+- [x] 派一个子代理只读审查这批改动，重点：
   - 签名核对能不能被绕过：换文件、换签名、旧签名冒充新版本、跳转到别的域名；
   - 下载和替换的失败路径：有没有留下坏的 exe，回退是否可靠；
   - 扫描中、绑定中、更新中的互斥；
   - `release.yml` 里私钥会不会落到别的 job、日志或产物里；
   - `unsafe` 的注册表和 `ShellExecuteW` 调用；
   - 界面和设计第 6.3、6.6 节一致。
-- [ ] 修完再继续。
+- [x] 修完再继续。
 
 ### 任务 13：发布 v0.4.0 并实测（先问用户）
 
@@ -2366,3 +2366,6 @@ $env:MHY_CARRY_SIGNED_DIR = "<临时文件夹>"; cargo test -p mhy-carry-update 
 - **私钥存进 1Password**（2026-11-04，用户提议并确认）：
   - 1Password 不能生成 minisign 密钥，只用来存。不让 CI 直接从 1Password 读：那样 GitHub 里要改存一个能读保险库的服务账号令牌，安全性不比现在好，还多一个第三方 Action。
   - 用 `op item create` 在 Personal 保险库建了“MhyCarry 更新签名密钥”：密码放在密码字段，私钥和公钥作为附件。再用 `op read` 读回来，三项都和本机文件一致，然后删掉了 `%USERPROFILE%\.mhycarry-signing\`。私钥和密码没有进入对话。
+- **任务 11：试跑签名**（2026-11-04，运行 41792350474，在 main 上手动运行）：`build`、`sign` 成功，`attest`、`release` 按预期跳过。
+  - 系统软件源里的 minisign 能从管道读密码，签名是预先哈希的格式（`ED`）。
+  - 下载产物后 `sha256sum -c` 通过；`verifies_a_signature_made_in_ci` 用程序里的公钥核对通过，签名说明是 `MhyCarry main`，所以这份签名程序不会拿来装。
