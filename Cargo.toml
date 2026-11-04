@@ -17,6 +17,7 @@ mhy-carry-api = { path = "crates/api" }
 mhy-carry-platform = { path = "crates/platform" }
 mhy-carry-runner = { path = "crates/runner" }
 mhy-carry-live = { path = "crates/live" }
+mhy-carry-update = { path = "crates/update" }
 
 base64 = "0.22"
 clap = { version = "4.6", features = ["derive"] }
@@ -24,6 +25,10 @@ dirs = "7"
 # 只解码截图常见的 PNG 和 JPEG。
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 jiff = { version = "0.2", features = ["serde"] }
+# 只在测试里用：生成测试用的密钥和签名（设计文档第 6.6 节）。
+minisign = "0.10"
+# 核对自动更新的签名。没有其他依赖。
+minisign-verify = "0.3"
 proptest = "1.12"
 qrcode = { version = "0.14", default-features = false }
 reqwest = "0.13"
@@ -33,6 +38,7 @@ rxing = { version = "0.9", default-features = false, features = ["decoders", "qr
 secrecy = { version = "0.10", features = ["serde"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sha2 = "0.10"
 tauri = "2.12"
 tauri-build = "2.7"
 tempfile = "3"
@@ -41,5 +47,5 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"
 url = "2"
 uuid = { version = "1", features = ["v4"] }
 wiremock = "0.6"
-windows = { version = "0.62", features = ["Win32_Foundation", "Win32_Media_MediaFoundation", "Win32_System_Com", "Win32_System_Console", "Win32_System_Threading", "Win32_UI_WindowsAndMessaging"] }
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_Media_MediaFoundation", "Win32_System_Com", "Win32_System_Console", "Win32_System_Registry", "Win32_System_Threading", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
 xcap = "0.9.8"
