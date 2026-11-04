@@ -14,8 +14,8 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
 
-# 分成三个 job，每个只拿自己要用的权限：构建步骤（包括依赖的编译脚本）既拿不到签发
-# 构建来源证明用的 OIDC 令牌，也不能写仓库。
+# 分成四个 job，每个只拿自己要用的权限：构建步骤（包括依赖的编译脚本）既拿不到签名私钥和
+# 签发构建来源证明用的 OIDC 令牌，也不能写仓库。
 jobs:
   build:
     runs-on: windows-latest
@@ -98,6 +98,15 @@ jobs:
           rm -f "$RUNNER_TEMP/update.key"
       - name: 用仓库里的公钥核对签名
         run: minisign -V -p crates/update/update.pub -m dist/SHA256SUMS -x dist/SHA256SUMS.minisig
+      - name: 核对签名格式和说明
+        # 程序只认预先哈希的签名（算法字节是 ED），并且核对签名说明里的版本（crates/update/src/verify.rs）。
+        run: |
+          algorithm=$(sed -n 2p dist/SHA256SUMS.minisig | base64 -d | head -c 2)
+          if [ "$algorithm" != "ED" ]; then
+            echo "签名不是预先哈希的格式，程序不认" >&2
+            exit 1
+          fi
+          grep -qxF "trusted comment: MhyCarry $GITHUB_REF_NAME" dist/SHA256SUMS.minisig
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: signature
