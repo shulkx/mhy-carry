@@ -15,7 +15,7 @@ use tauri::async_runtime::JoinHandle;
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::mpsc;
 
-use crate::state::{AccountsView, AppState, BindView, Credential, SettingsView};
+use crate::state::{AccountsView, AppState, BindView, Credential, SettingsView, UpdateView};
 
 /// 推送状态快照的事件名（设计文档第 9 节）。
 pub const STATE_EVENT: &str = "state-changed";
@@ -37,6 +37,8 @@ pub struct Model {
     /// 最近一条提示和它出现的时间（本地时间）。
     pub last_notice: Option<String>,
     pub notice_at: Option<String>,
+    /// 检查更新和自动更新（设计文档第 6.6 节）。
+    pub update: UpdateView,
     /// 最新快照的序号，每推送一次加一。
     seq: u64,
     /// 上一次推送给界面的快照，没变就不再推送。
@@ -56,6 +58,9 @@ impl Model {
         }
         if self.bind.in_progress() {
             return Err("绑定中不能修改账号。".to_owned());
+        }
+        if self.update.busy() {
+            return Err("正在更新，请稍等。".to_owned());
         }
         if let AccountsView::Unavailable { message } = &self.accounts {
             return Err(message.clone());
@@ -91,6 +96,7 @@ impl Shared {
             scan_stop: None,
             last_notice: None,
             notice_at: None,
+            update: UpdateView::Idle,
             seq: 0,
             last_sent: None,
         };
@@ -129,9 +135,12 @@ fn snapshot_of(model: &Model, store: &JsonFileStore) -> AppState {
             idle_timeout_secs: model.settings.scan.idle_timeout_secs,
             auto_confirm: model.settings.scan.auto_confirm,
             live_room: model.settings.scan.live_room.clone(),
+            check_updates: model.settings.update.check_on_start,
         },
         credential_file: store.path().display().to_string(),
         leftovers: model.leftovers,
+        update: model.update.clone(),
+        version: env!("CARGO_PKG_VERSION").to_owned(),
     }
 }
 

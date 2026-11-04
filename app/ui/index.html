@@ -9,6 +9,11 @@
 </head>
 <body>
 <main class="content">
+  <div class="update-bar" id="update-bar" role="status" hidden>
+    <span class="update-text" id="update-text"></span>
+    <span class="update-actions" id="update-actions"></span>
+  </div>
+
   <section class="account" aria-labelledby="account-label">
     <div class="account-head">
       <h2 class="section-label" id="account-label">账号</h2>
@@ -66,6 +71,10 @@
       </select>
       <label for="setting-timeout">无二维码自动停止</label>
       <span><input id="setting-timeout" type="number" min="30" step="30"> 秒（最少 30）</span>
+      <label for="setting-check-updates">检查更新</label>
+      <label class="check"><input id="setting-check-updates" type="checkbox"> 打开程序时检查</label>
+      <span>版本</span>
+      <span class="update-check"><span id="current-version"></span><button type="button" class="btn small" id="check-update">检查更新</button><span class="meta" id="update-result" aria-live="polite"></span></span>
     </div>
   </details>
 </main>

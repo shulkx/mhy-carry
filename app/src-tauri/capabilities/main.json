@@ -17,6 +17,10 @@
     "allow-scan-stop",
     "allow-update-settings",
     "allow-set-auto-confirm",
-    "allow-lookup-room"
+    "allow-lookup-room",
+    "allow-check-update",
+    "allow-install-update",
+    "allow-open-release-page",
+    "allow-set-check-updates"
   ]
 }

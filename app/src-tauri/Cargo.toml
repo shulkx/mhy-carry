@@ -16,6 +16,7 @@ mhy-carry-core.workspace = true
 mhy-carry-live.workspace = true
 mhy-carry-platform.workspace = true
 mhy-carry-runner.workspace = true
+mhy-carry-update.workspace = true
 base64.workspace = true
 jiff.workspace = true
 qrcode = { workspace = true, features = ["svg"] }

@@ -16,6 +16,7 @@ const WAITING = [
 ];
 const BAD_STOPS = ["credential_invalid", "target_gone", "capture_failing", "credential_check_failed", "live_failed"];
 const MAX_NOTE_CHARS = 20;
+const UPDATING = ["downloading", "installing"];
 
 let state = null;
 let target = null; // 界面上选的截图目标；还没选过时用设置里的默认值
@@ -70,9 +71,9 @@ function activeAccount() {
   return accountList().find((item) => item.id === state.accounts.active) ?? null;
 }
 
-// 扫描中、绑定中不能动账号（设计文档第 9 节）。
+// 扫描中、绑定中、更新中不能动账号（设计文档第 9 节、第 6.6 节）。
 function accountsLocked() {
-  return state.scan.kind !== "idle" || BUSY_BIND.includes(state.bind.kind);
+  return state.scan.kind !== "idle" || BUSY_BIND.includes(state.bind.kind) || UPDATING.includes(state.update.kind);
 }
 
 function startBind(passportId = null) {
@@ -423,7 +424,8 @@ function renderScan() {
     start.disabled = true;
   } else if (idle) {
     // 大按钮写着扫描用的账号（设计文档第 6.3 节）。
-    const ready = active && active.credential !== "invalid" && !BUSY_BIND.includes(state.bind.kind);
+    const ready = active && active.credential !== "invalid" && !BUSY_BIND.includes(state.bind.kind)
+      && !UPDATING.includes(state.update.kind);
     start.textContent = active ? "开始扫描（" + active.name + "）" : "开始扫描";
     start.disabled = !ready;
   } else {
@@ -442,6 +444,55 @@ function renderScan() {
     notice.textContent = "绑定账号后才能开始扫描。";
   }
   renderRoomInfo();
+}
+
+// ---- 更新（设计文档第 6.6 节） ----
+
+function renderUpdate() {
+  const update = state.update;
+  const actions = $("update-actions");
+  actions.replaceChildren();
+  // 扫描中、绑定中不能更新。
+  const busy = state.scan.kind !== "idle" || BUSY_BIND.includes(state.bind.kind);
+  const page = () => button("发布页面", "btn small", () => call("open_release_page"));
+  const install = (label, className) => {
+    const node = button(label, className, () => call("install_update"));
+    node.disabled = busy;
+    if (busy) node.title = "扫描或绑定结束后才能更新";
+    return node;
+  };
+  let text = null;
+  if (update.kind === "available" && update.installable) {
+    text = "有新版本 v" + update.version + "。";
+    actions.append(install("更新并重启", "btn small primary"), page());
+  } else if (update.kind === "available") {
+    text = "有新版本 v" + update.version + "，请到发布页面下载。";
+    actions.append(page());
+  } else if (update.kind === "downloading") {
+    text = "正在下载 v" + update.version + "… " + update.percent + "%";
+  } else if (update.kind === "installing") {
+    text = "正在安装 v" + update.version + "，马上重启…";
+  } else if (update.kind === "needs_restart") {
+    text = "已经换成 v" + update.version + "，请关掉程序重新打开。";
+  } else if (update.kind === "failed" && update.version) {
+    text = "更新失败：" + update.message;
+    actions.append(install("重试", "btn small"), page());
+  }
+  const bar = $("update-bar");
+  bar.hidden = text === null;
+  bar.classList.toggle("bad", update.kind === "failed");
+  $("update-text").textContent = text ?? "";
+
+  // 设置里的版本和检查结果。
+  $("current-version").textContent = "v" + state.version;
+  let result = "";
+  if (update.kind === "checking") result = "正在检查…";
+  else if (update.kind === "latest") result = "已是最新版本";
+  else if (update.kind === "available") result = "有新版本 v" + update.version;
+  else if (update.kind === "failed" && !update.version) result = "检查失败：" + update.message;
+  $("update-result").textContent = result;
+  $("check-update").disabled = update.kind === "checking" || UPDATING.includes(update.kind);
+  $("setting-check-updates").checked = state.settings.check_updates;
 }
 
 // ---- 设置和页脚 ----
@@ -475,6 +526,7 @@ function render(next) {
   renderAccount();
   renderScan();
   renderSettings();
+  renderUpdate();
   renderFooter();
 }
 
@@ -520,6 +572,12 @@ $("auto-confirm").addEventListener("change", async () => {
 });
 $("setting-target").addEventListener("change", saveSettings);
 $("setting-timeout").addEventListener("change", saveSettings);
+$("check-update").addEventListener("click", () => call("check_update"));
+$("setting-check-updates").addEventListener("change", async () => {
+  await call("set_check_updates", { on: $("setting-check-updates").checked });
+  // 没改成时按快照退回原来的样子。
+  renderUpdate();
+});
 $("switch-account").addEventListener("click", () => {
   open = open === "switch" ? null : "switch";
   editing = false;

@@ -280,6 +280,20 @@ button, select, input { font: inherit; color: inherit; }
 .notice { font-size: 13px; color: var(--muted); margin-top: 4px; }
 .notice time { font-variant-numeric: tabular-nums; margin-right: 6px; }
 
+.update-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--accent-soft);
+  font-size: 13px;
+}
+.update-bar.bad { background: var(--bad-soft); color: var(--bad); }
+.update-text { flex: 1 1 auto; overflow-wrap: anywhere; }
+.update-actions { display: flex; gap: 8px; }
+
 details.settings { border-top: 1px solid var(--line); padding-top: 12px; }
 details.settings summary { cursor: pointer; color: var(--muted); font-size: 13px; }
 .settings-grid {
@@ -297,6 +311,9 @@ details.settings summary { cursor: pointer; color: var(--muted); font-size: 13px
   padding: 4px 8px;
 }
 .settings-grid input { width: 90px; font-variant-numeric: tabular-nums; }
+.settings-grid input[type="checkbox"] { width: auto; }
+.settings-grid .check { display: flex; align-items: center; gap: 6px; }
+.update-check { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
 
 .footer {
   flex: none;

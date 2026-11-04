@@ -33,6 +33,10 @@ pub struct AppState {
     pub credential_file: String,
     /// 账号文件损坏时留下的备份等旧文件的个数。
     pub leftovers: usize,
+    /// 检查更新和自动更新（设计文档第 6.6 节）。
+    pub update: UpdateView,
+    /// 当前版本，比如 0.4.0。
+    pub version: String,
 }
 
 /// 账号列表（设计文档第 6.4 节）。
@@ -203,6 +207,76 @@ impl BindView {
     }
 }
 
+/// 检查更新和自动更新的状态（设计文档第 6.6 节）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum UpdateView {
+    /// 没查过，或者打开程序时查失败了、没有新版本。
+    Idle,
+    Checking,
+    /// 手动检查的结果：已是最新版本。
+    Latest,
+    /// 有新版本。`installable` 为 false 时只能到发布页面手动下载。
+    Available {
+        version: String,
+        installable: bool,
+    },
+    Downloading {
+        version: String,
+        percent: u8,
+    },
+    /// 下载核对完了，正在替换和重启。
+    Installing {
+        version: String,
+    },
+    /// 已经换成新版本，但没能自动重启。
+    NeedsRestart {
+        version: String,
+    },
+    /// 检查或更新失败。更新失败时 `version` 是要装的版本，可以重试。
+    Failed {
+        message: String,
+        version: Option<String>,
+    },
+}
+
+impl UpdateView {
+    /// 正在下载或替换。这期间不能开始扫描和绑定。
+    pub fn busy(&self) -> bool {
+        matches!(self, Self::Downloading { .. } | Self::Installing { .. })
+    }
+
+    /// 现在可以开始更新的版本：有新版本并且能自动更新，或者上次更新失败了可以重试。
+    pub fn installable(&self) -> Option<&str> {
+        match self {
+            Self::Available {
+                version,
+                installable: true,
+            }
+            | Self::Failed {
+                version: Some(version),
+                ..
+            } => Some(version),
+            _ => None,
+        }
+    }
+
+    /// 发布页面对应的版本。
+    pub fn version(&self) -> Option<&str> {
+        match self {
+            Self::Available { version, .. }
+            | Self::Downloading { version, .. }
+            | Self::Installing { version }
+            | Self::NeedsRestart { version }
+            | Self::Failed {
+                version: Some(version),
+                ..
+            } => Some(version),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct SettingsView {
     pub default_target: TargetKind,
@@ -210,6 +284,8 @@ pub struct SettingsView {
     pub auto_confirm: bool,
     /// 上次的直播间，界面打开时填进输入框。
     pub live_room: String,
+    /// 打开程序时检查更新（设计文档第 6.6 节）。
+    pub check_updates: bool,
 }
 
 /// 网页端在“设置”里改的两项：默认截图目标、超时（不短于 30 秒）。其他设置不动。
@@ -458,5 +534,43 @@ mod tests {
             || "10:03:00".to_owned(),
         );
         assert_eq!(at.as_deref(), Some("10:03:00"));
+    }
+
+    #[test]
+    fn only_signed_releases_and_failed_updates_can_be_installed() {
+        let available = |installable| UpdateView::Available {
+            version: "0.4.1".to_owned(),
+            installable,
+        };
+        assert_eq!(available(true).installable(), Some("0.4.1"));
+        assert_eq!(available(false).installable(), None);
+        assert_eq!(available(false).version(), Some("0.4.1"));
+        let retry = UpdateView::Failed {
+            message: "网络请求失败".to_owned(),
+            version: Some("0.4.1".to_owned()),
+        };
+        assert_eq!(retry.installable(), Some("0.4.1"));
+        let check_failed = UpdateView::Failed {
+            message: "网络请求失败".to_owned(),
+            version: None,
+        };
+        assert_eq!(check_failed.installable(), None);
+        assert_eq!(check_failed.version(), None);
+        assert_eq!(UpdateView::Latest.installable(), None);
+    }
+
+    #[test]
+    fn downloading_and_installing_are_busy() {
+        let version = || "0.4.1".to_owned();
+        assert!(
+            UpdateView::Downloading {
+                version: version(),
+                percent: 5
+            }
+            .busy()
+        );
+        assert!(UpdateView::Installing { version: version() }.busy());
+        assert!(!UpdateView::NeedsRestart { version: version() }.busy());
+        assert!(!UpdateView::Checking.busy());
     }
 }

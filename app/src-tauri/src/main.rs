@@ -8,6 +8,7 @@ mod commands;
 mod model;
 mod scan;
 mod state;
+mod updater;
 
 use tauri::Manager;
 
@@ -15,6 +16,7 @@ fn main() {
     let result = tauri::Builder::default()
         .setup(|app| {
             app.manage(model::Shared::load()?);
+            updater::on_start(app.handle());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -31,6 +33,10 @@ fn main() {
             commands::update_settings,
             commands::set_auto_confirm,
             commands::lookup_room,
+            commands::check_update,
+            commands::install_update,
+            commands::open_release_page,
+            commands::set_check_updates,
         ])
         .run(tauri::generate_context!());
     // 正式版没有控制台，启动失败（比如数据目录不可用、设置文件读写出错）时弹窗说明原因。
@@ -50,5 +56,15 @@ mod tests {
             config["identifier"],
             mhy_carry_platform::paths::APP_DIR_NAME
         );
+    }
+
+    /// 发布流程按 tauri.conf.json 的版本号打 tag，检查更新用的是 Cargo 的版本号，两个必须一致，
+    /// 而且是三段数字，否则不会检查更新（设计文档第 6.6 节）。
+    #[test]
+    fn version_is_checkable_and_matches_the_bundle() {
+        let config: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        assert_eq!(config["version"], env!("CARGO_PKG_VERSION"));
+        assert!(crate::updater::current_version().is_some());
     }
 }

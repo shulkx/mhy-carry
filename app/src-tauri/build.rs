@@ -15,6 +15,10 @@ fn main() {
         "update_settings",
         "set_auto_confirm",
         "lookup_room",
+        "check_update",
+        "install_update",
+        "open_release_page",
+        "set_check_updates",
     ]);
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(manifest))
         .expect("tauri-build 失败");

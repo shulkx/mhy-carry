@@ -17,13 +17,14 @@ use mhy_carry_platform::capture::{
 };
 use mhy_carry_platform::video::MfH264Decoder;
 use mhy_carry_runner::ScanJob;
+use mhy_carry_update::{Version, release_page};
 use serde::Serialize;
 use tauri::{AppHandle, Manager, State};
 use tokio::sync::mpsc;
 
 use crate::model::{Model, Shared, reload_accounts, update};
-use crate::state::{AppState, BindView, apply_settings};
-use crate::{bind, scan};
+use crate::state::{AppState, BindView, UpdateView, apply_settings};
+use crate::{bind, scan, updater};
 
 type CommandResult<T = ()> = Result<T, String>;
 
@@ -270,6 +271,9 @@ pub async fn scan_start(
         if model.bind.in_progress() {
             return Err("绑定中不能开始扫描。".to_owned());
         }
+        if model.update.busy() {
+            return Err("正在更新，不能开始扫描。".to_owned());
+        }
         if live.is_some() {
             // 记住这次的直播间。写不进去也不影响这次扫描。
             model.settings.scan.live_room = room.as_deref().unwrap_or_default().trim().to_owned();
@@ -444,6 +448,66 @@ pub fn update_settings(
         if let Err(error) = model.settings.save(&shared.settings_path) {
             // 没保存成功就退回原来的设置，免得界面上显示的和重启后的不一样。
             model.settings.scan = previous;
+            result = Err(error.to_string());
+        }
+    });
+    result
+}
+
+/// 手动检查更新（设计文档第 6.6 节）。
+#[tauri::command]
+pub fn check_update(app: AppHandle) {
+    updater::start_check(&app, true);
+}
+
+/// 下载、核对并换上新版本，然后重启（设计文档第 6.6 节）。扫描中、绑定中不能更新。
+#[tauri::command]
+pub fn install_update(app: AppHandle) -> CommandResult {
+    let mut result = Ok(());
+    let mut target = None;
+    update(&app, |model| {
+        if model.scanning() {
+            result = Err("扫描中不能更新，先停止扫描。".to_owned());
+            return;
+        }
+        if model.bind.in_progress() {
+            result = Err("绑定中不能更新。".to_owned());
+            return;
+        }
+        match model.update.installable().and_then(Version::parse) {
+            Some(version) => {
+                model.update = UpdateView::Downloading {
+                    version: version.to_string(),
+                    percent: 0,
+                };
+                target = Some(version);
+            }
+            None => result = Err("没有可以自动安装的新版本。".to_owned()),
+        }
+    });
+    if let Some(version) = target {
+        tauri::async_runtime::spawn(updater::install(app, version));
+    }
+    result
+}
+
+/// 用默认浏览器打开发布页面（设计文档第 6.6 节）。地址由程序按版本号拼出。
+#[tauri::command]
+pub fn open_release_page(shared: State<'_, Shared>) -> CommandResult {
+    let version = shared.lock().update.version().and_then(Version::parse);
+    mhy_carry_platform::shell::open_in_browser(&release_page(version))
+}
+
+/// 打开或关闭“打开程序时检查更新”，记在设置里（设计文档第 6.6 节）。
+#[tauri::command]
+pub fn set_check_updates(app: AppHandle, on: bool) -> CommandResult {
+    let shared = app.state::<Shared>();
+    let mut result = Ok(());
+    update(&app, |model| {
+        let previous = model.settings.update.check_on_start;
+        model.settings.update.check_on_start = on;
+        if let Err(error) = model.settings.save(&shared.settings_path) {
+            model.settings.update.check_on_start = previous;
             result = Err(error.to_string());
         }
     });
