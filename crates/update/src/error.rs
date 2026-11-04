@@ -15,8 +15,12 @@ pub enum UpdateError {
     /// 只在更新失败时显示，界面前面已经写了“更新失败：”。
     #[error("{0}")]
     Verify(String),
+    #[error("另一个 MhyCarry 窗口正在更新。等它完成，或者关掉它再试。")]
+    Busy,
     #[error("写入更新文件失败：{0}。可以到发布页面手动下载。")]
     Io(#[from] std::io::Error),
+    #[error("换不上新版本：{0}。可以到发布页面手动下载。")]
+    Replace(std::io::Error),
 }
 
 impl UpdateError {

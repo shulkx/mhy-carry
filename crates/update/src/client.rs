@@ -3,6 +3,7 @@
 //! 查版本走网页的“最新发布”链接，不走 GitHub API：API 不登录时每个 IP 每小时只能请求 60 次，
 //! 共用出口 IP 的网络很容易用光。
 
+use std::io::{self, Read};
 use std::path::Path;
 use std::time::Duration;
 
@@ -148,18 +149,22 @@ impl UpdateClient {
         limit: u64,
         progress: impl FnMut(u64, Option<u64>),
     ) -> Result<String, UpdateError> {
-        let result = self.download_to(version, file, path, limit, progress).await;
+        let output = open_staged(path).await?;
+        let result = self
+            .download_to(version, file, output, limit, progress)
+            .await;
         if result.is_err() {
             let _ = tokio::fs::remove_file(path).await;
         }
         result
     }
 
+    /// 下载到 `output`，返回时文件已经关闭。
     async fn download_to(
         &self,
         version: Version,
         file: &str,
-        path: &Path,
+        mut output: tokio::fs::File,
         limit: u64,
         mut progress: impl FnMut(u64, Option<u64>),
     ) -> Result<String, UpdateError> {
@@ -168,7 +173,6 @@ impl UpdateClient {
         if total.is_some_and(|total| total > limit) {
             return Err(UpdateError::TooLarge(limit));
         }
-        let mut output = tokio::fs::File::create(path).await?;
         let mut hasher = Sha256::new();
         let mut done = 0;
         progress(done, total);
@@ -181,6 +185,7 @@ impl UpdateClient {
             output.write_all(&chunk).await?;
             progress(done, total);
         }
+        output.flush().await?;
         output.sync_all().await?;
         Ok(hex(&hasher.finalize()))
     }
@@ -222,6 +227,49 @@ impl UpdateClient {
             return Err(UpdateError::Status(response.status().as_u16()));
         }
         Ok(response)
+    }
+}
+
+/// Windows 的共享模式：别的程序只能读。
+#[cfg(windows)]
+const FILE_SHARE_READ: u32 = 0x1;
+/// Windows 的错误码：文件正被别的程序占用。
+const ERROR_SHARING_VIOLATION: i32 = 32;
+
+/// 新建 `.new` 准备写入，先删掉上次留下的。下载期间别的程序只能读，不能写、截断或删掉它：
+/// 同时开着两个窗口、都在更新时，后来的那个打不开，不会把前一个下载到一半的文件弄坏。
+async fn open_staged(path: &Path) -> Result<tokio::fs::File, UpdateError> {
+    let busy = |error: io::Error| {
+        if error.raw_os_error() == Some(ERROR_SHARING_VIOLATION)
+            || error.kind() == io::ErrorKind::AlreadyExists
+        {
+            UpdateError::Busy
+        } else {
+            UpdateError::Io(error)
+        }
+    };
+    match tokio::fs::remove_file(path).await {
+        Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(busy(error)),
+        _ => {}
+    }
+    let mut options = tokio::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(windows)]
+    options.share_mode(FILE_SHARE_READ);
+    options.open(path).await.map_err(busy)
+}
+
+/// 算一个文件的 SHA256（小写十六进制）。
+pub(crate) fn hash_file(path: &Path) -> io::Result<String> {
+    let mut file = std::fs::File::open(path)?;
+    let mut hasher = Sha256::new();
+    let mut buffer = vec![0; 64 * 1024];
+    loop {
+        let read = file.read(&mut buffer)?;
+        if read == 0 {
+            return Ok(hex(&hasher.finalize()));
+        }
+        hasher.update(&buffer[..read]);
     }
 }
 
@@ -467,5 +515,70 @@ mod tests {
             "{result:?}"
         );
         assert!(!target.exists());
+    }
+
+    #[test]
+    fn files_are_hashed_from_disk() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("x");
+        std::fs::write(&file, vec![7u8; 200 * 1024]).unwrap();
+        assert_eq!(
+            hash_file(&file).unwrap(),
+            hex(&Sha256::digest(vec![7u8; 200 * 1024]))
+        );
+    }
+
+    /// 另一个窗口正在下载时，后来的不能动它的文件。
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn a_download_in_progress_elsewhere_is_left_alone() {
+        use std::os::windows::fs::OpenOptionsExt;
+
+        let server = MockServer::start().await;
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("MhyCarry.exe.new");
+        std::fs::write(&target, "另一个窗口下载到一半").unwrap();
+        // 像 `open_staged` 一样打开：别的程序只能读。
+        let other = std::fs::OpenOptions::new()
+            .write(true)
+            .share_mode(FILE_SHARE_READ)
+            .open(&target)
+            .unwrap();
+        let result = UpdateClient::for_tests(&server.uri())
+            .download(
+                V041,
+                "MhyCarry_0.4.1_x64-portable.exe",
+                &target,
+                MAX_PROGRAM,
+                |_, _| {},
+            )
+            .await;
+        assert!(matches!(result, Err(UpdateError::Busy)), "{result:?}");
+        drop(other);
+        assert_eq!(
+            std::fs::read_to_string(&target).unwrap(),
+            "另一个窗口下载到一半"
+        );
+        assert!(server.received_requests().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn leftover_staged_files_are_replaced() {
+        let server = MockServer::start().await;
+        let file = "MhyCarry_0.4.1_x64-portable.exe";
+        Mock::given(path(format!(
+            "/shulkx/mhy-carry/releases/download/v0.4.1/{file}"
+        )))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(b"new".to_vec()))
+        .mount(&server)
+        .await;
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("MhyCarry.exe.new");
+        std::fs::write(&target, "上次没下完的很长很长的文件").unwrap();
+        UpdateClient::for_tests(&server.uri())
+            .download(V041, file, &target, MAX_PROGRAM, |_, _| {})
+            .await
+            .unwrap();
+        assert_eq!(std::fs::read(&target).unwrap(), b"new");
     }
 }

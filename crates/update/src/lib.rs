@@ -60,17 +60,35 @@ async fn signed_hash(
     let signature = client
         .fetch(version, release::SUMS_SIGNATURE, client::MAX_SMALL)
         .await?;
-    verify::expected_hash(key, &sums, &signature, &release::program_file(version))
+    verify::expected_hash(key, &sums, &signature, version)
 }
 
-/// 下载并核对 `version`，放到 `exe` 旁边的 `.new`，返回它的路径（第 6.6 节“更新”第 1–3 步）。
+/// 下载并核对好的新版本，放在程序旁边的 `.new`。
+#[derive(Debug)]
+pub struct Staged {
+    exe: PathBuf,
+    hash: String,
+}
+
+impl Staged {
+    /// 再读一遍 `.new` 核对哈希，然后换掉正在运行的程序（第 6.6 节“更新”第 4 步）。
+    pub fn install(&self) -> Result<(), UpdateError> {
+        let staged = install::staged_path(&self.exe);
+        if client::hash_file(&staged).map_err(UpdateError::Replace)? != self.hash {
+            return Err(UpdateError::Verify("新版本的文件在替换前被改过".to_owned()));
+        }
+        install::swap(&self.exe).map_err(UpdateError::Replace)
+    }
+}
+
+/// 下载并核对 `version`，放到 `exe` 旁边的 `.new`（第 6.6 节“更新”第 1–3 步）。
 /// `progress` 收到已下载的字节数和总字节数（服务器没给时是 `None`）。
 pub async fn download(
     client: &UpdateClient,
     version: Version,
     exe: &Path,
     progress: impl FnMut(u64, Option<u64>),
-) -> Result<PathBuf, UpdateError> {
+) -> Result<Staged, UpdateError> {
     download_with(client, &verify::official_key()?, version, exe, progress).await
 }
 
@@ -80,7 +98,7 @@ async fn download_with(
     version: Version,
     exe: &Path,
     progress: impl FnMut(u64, Option<u64>),
-) -> Result<PathBuf, UpdateError> {
+) -> Result<Staged, UpdateError> {
     let expected = signed_hash(client, key, version).await?;
     let staged = install::staged_path(exe);
     let actual = client
@@ -98,7 +116,10 @@ async fn download_with(
             "下载的程序和签过名的哈希对不上".to_owned(),
         ));
     }
-    Ok(staged)
+    Ok(Staged {
+        exe: exe.to_path_buf(),
+        hash: expected,
+    })
 }
 
 #[cfg(test)]
@@ -116,6 +137,7 @@ mod tests {
     };
     const PROGRAM: &[u8] = b"MhyCarry 0.4.1";
     const BASE: &str = "/shulkx/mhy-carry/releases/download/v0.4.1/";
+    const COMMENT: &str = "MhyCarry v0.4.1";
 
     fn parse(text: &str) -> Version {
         Version::parse(text).unwrap()
@@ -152,7 +174,7 @@ mod tests {
             ("MhyCarry_0.4.1_x64-portable.exe", program.to_vec()),
         ];
         if let Some(key) = key {
-            files.push(("SHA256SUMS.minisig", key.sign(sums.as_bytes())));
+            files.push(("SHA256SUMS.minisig", key.sign(sums.as_bytes(), COMMENT)));
         }
         for (name, body) in files {
             Mock::given(path(format!("{BASE}{name}")))
@@ -171,6 +193,14 @@ mod tests {
             .iter()
             .map(|request| request.url.path().to_owned())
             .collect()
+    }
+
+    /// 临时文件夹里的“正在运行的程序”。
+    fn program() -> (tempfile::TempDir, PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let exe = dir.path().join("MhyCarry.exe");
+        std::fs::write(&exe, "MhyCarry 0.4.0").unwrap();
+        (dir, exe)
     }
 
     #[tokio::test]
@@ -260,25 +290,44 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn signed_programs_are_downloaded_next_to_the_exe() {
+    async fn signed_programs_replace_the_running_one() {
         let key = TestKey::new();
         let server = release(Some(&key), sums_for(PROGRAM), PROGRAM).await;
-        let dir = tempfile::tempdir().unwrap();
-        let exe = dir.path().join("MhyCarry.exe");
+        let (_dir, exe) = program();
         let client = UpdateClient::for_tests(&server.uri());
         let staged = download_with(&client, &key.public(), V041, &exe, |_, _| {})
             .await
             .unwrap();
-        assert_eq!(staged, install::staged_path(&exe));
-        assert_eq!(std::fs::read(&staged).unwrap(), PROGRAM);
+        assert_eq!(std::fs::read(install::staged_path(&exe)).unwrap(), PROGRAM);
+        staged.install().unwrap();
+        assert_eq!(std::fs::read(&exe).unwrap(), PROGRAM);
+        assert_eq!(
+            std::fs::read(install::old_path(&exe)).unwrap(),
+            b"MhyCarry 0.4.0"
+        );
+    }
+
+    #[tokio::test]
+    async fn files_changed_before_the_swap_are_not_installed() {
+        let key = TestKey::new();
+        let server = release(Some(&key), sums_for(PROGRAM), PROGRAM).await;
+        let (_dir, exe) = program();
+        let client = UpdateClient::for_tests(&server.uri());
+        let staged = download_with(&client, &key.public(), V041, &exe, |_, _| {})
+            .await
+            .unwrap();
+        std::fs::write(install::staged_path(&exe), "被改过").unwrap();
+        let result = staged.install();
+        assert!(matches!(result, Err(UpdateError::Verify(_))), "{result:?}");
+        assert_eq!(std::fs::read(&exe).unwrap(), b"MhyCarry 0.4.0");
+        assert!(!install::old_path(&exe).exists());
     }
 
     #[tokio::test]
     async fn programs_that_differ_from_the_signed_hash_are_deleted() {
         let key = TestKey::new();
         let server = release(Some(&key), sums_for(PROGRAM), b"something else").await;
-        let dir = tempfile::tempdir().unwrap();
-        let exe = dir.path().join("MhyCarry.exe");
+        let (_dir, exe) = program();
         let client = UpdateClient::for_tests(&server.uri());
         let result = download_with(&client, &key.public(), V041, &exe, |_, _| {}).await;
         assert!(matches!(result, Err(UpdateError::Verify(_))), "{result:?}");
@@ -288,8 +337,7 @@ mod tests {
     #[tokio::test]
     async fn other_keys_stop_before_the_program_is_downloaded() {
         let server = release(Some(&TestKey::new()), sums_for(PROGRAM), PROGRAM).await;
-        let dir = tempfile::tempdir().unwrap();
-        let exe = dir.path().join("MhyCarry.exe");
+        let (_dir, exe) = program();
         let client = UpdateClient::for_tests(&server.uri());
         let result = download_with(&client, &TestKey::new().public(), V041, &exe, |_, _| {}).await;
         assert!(matches!(result, Err(UpdateError::Verify(_))), "{result:?}");

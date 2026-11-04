@@ -93,6 +93,17 @@ mod tests {
     }
 
     #[test]
+    fn swap_changes_nothing_when_the_old_file_cannot_be_removed() {
+        let (_dir, exe) = program();
+        fs::write(staged_path(&exe), "新版本").unwrap();
+        // 删不掉的 `.old`：一个同名的文件夹。
+        fs::create_dir(old_path(&exe)).unwrap();
+        assert!(swap(&exe).is_err());
+        assert_eq!(read(&exe), "旧版本");
+        assert_eq!(read(&staged_path(&exe)), "新版本");
+    }
+
+    #[test]
     fn clean_up_removes_leftovers() {
         let (_dir, exe) = program();
         fs::write(old_path(&exe), "旧版本").unwrap();
