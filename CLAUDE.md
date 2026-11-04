@@ -57,7 +57,7 @@ Push-Location app; cargo tauri build --bundles nsis --ci; Pop-Location   # 安�
 
 - stoken、ticket、Cookie、`accounts.json` 的内容，不贴进聊天、不提交、不写进文档或日志。实测时只记录字段名和错误码。含二维码的截图也不提交。
 - 用真实账号测试只能由用户本人手动操作；CI 里不放任何凭证。
-- 自动更新的签名私钥和密码只在用户本机和仓库的 Actions secrets（`UPDATE_SIGNING_KEY`、`UPDATE_SIGNING_PASSWORD`）里：不读，不贴进聊天，不提交。只读公钥 `update.key.pub`，解开 base64 后提交为 `crates/update/update.pub`。
+- 自动更新的签名私钥和密码只在用户 1Password 的 Personal 保险库（条目“MhyCarry 更新签名密钥”）和仓库的 Actions secrets（`UPDATE_SIGNING_KEY`、`UPDATE_SIGNING_PASSWORD`）里：不读，不贴进聊天，不提交，本机不留文件。公钥提交在 `crates/update/update.pub`。要重新生成时，照计划 docs/plans/2026-11-04-auto-update-plan.md 执行记录里“签名密钥”的做法：脚本生成、管道直接交给 `gh secret set` 和 `op`，输出全部丢弃。
 - 对外的操作先问用户：创建或推送 GitHub 仓库、发布 Release、改仓库设置。
 
 ## 本机环境

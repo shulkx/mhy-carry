@@ -2363,3 +2363,6 @@ $env:MHY_CARRY_SIGNED_DIR = "<临时文件夹>"; cargo test -p mhy-carry-update 
   - 文件在 `%USERPROFILE%\.mhycarry-signing\`：`update.key`（私钥）、`update.key.password`（密码）、`update.key.pub`（公钥），由用户备份。
   - 公钥 ID `219145D4CD58C838`，解开 base64 后提交为 `crates/update/update.pub`，替换掉执行中用的临时测试公钥。
   - 本机先验证过：用私钥和密码签一个假的 `SHA256SUMS`（`cargo tauri signer sign -f`；`-k` 接的是私钥内容，不是路径），程序里的公钥能核对。
+- **私钥存进 1Password**（2026-11-04，用户提议并确认）：
+  - 1Password 不能生成 minisign 密钥，只用来存。不让 CI 直接从 1Password 读：那样 GitHub 里要改存一个能读保险库的服务账号令牌，安全性不比现在好，还多一个第三方 Action。
+  - 用 `op item create` 在 Personal 保险库建了“MhyCarry 更新签名密钥”：密码放在密码字段，私钥和公钥作为附件。再用 `op read` 读回来，三项都和本机文件一致，然后删掉了 `%USERPROFILE%\.mhycarry-signing\`。私钥和密码没有进入对话。

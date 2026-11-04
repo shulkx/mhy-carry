@@ -476,9 +476,9 @@ Rust 端维护一份完整的界面状态（`AppState`），分账号、绑定�
 - 程序自己下载的文件没有“来自网络”的标记，所以重启时不会出现 SmartScreen 提示；核对签名就是为了这一点。
 
 **签名**
-- 用 minisign（Ed25519）。你在本机用 `cargo tauri signer generate` 生成带密码的密钥；Tauri 的密钥文件就是 minisign 格式外面套一层 base64。
+- 用 minisign（Ed25519）。用 `cargo tauri signer generate` 生成带密码的密钥，密码随机生成；Tauri 的密钥文件就是 minisign 格式外面套一层 base64。
 - 公钥：解开 base64 后提交在 `crates/update/update.pub`，编进程序。
-- 私钥和密码：放在仓库的 Actions secrets（`UPDATE_SIGNING_KEY`、`UPDATE_SIGNING_PASSWORD`），本机的备份由你保管。不提交，不贴进聊天，不写进文档和日志。
+- 私钥和密码：放在仓库的 Actions secrets（`UPDATE_SIGNING_KEY`、`UPDATE_SIGNING_PASSWORD`），备份在你 1Password 的 Personal 保险库（条目“MhyCarry 更新签名密钥”），本机不留文件。不提交，不贴进聊天，不写进文档和日志。
 - `release.yml` 新增 `sign` job（第 12 节）：
   - 只拿 `contents: read` 和这两个 secret，不编译任何代码；
   - 下载构建产物，核对 `SHA256SUMS`，用系统软件源里的 minisign 签名，生成 `SHA256SUMS.minisig`；

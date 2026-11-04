@@ -6,7 +6,7 @@ use crate::error::UpdateError;
 use crate::release::program_file;
 use crate::version::Version;
 
-/// 发布签名用的公钥（minisign 格式）。私钥只在你本机和仓库的 Actions secrets 里；
+/// 发布签名用的公钥（minisign 格式）。私钥只在你的 1Password 和仓库的 Actions secrets 里；
 /// `release.yml` 的 `sign` job 签名后也用这个文件核对一遍。
 const OFFICIAL_KEY: &str = include_str!("../update.pub");
 
