@@ -24,6 +24,9 @@ pub struct Settings {
     /// M1 写出的设置文件没有这一块，读的时候用默认值。
     #[serde(default)]
     pub scan: ScanSettings,
+    /// 检查更新（设计文档第 6.6 节）。v0.4 之前的文件没有这一块，读的时候用默认值。
+    #[serde(default)]
+    pub update: UpdateSettings,
 }
 
 /// 扫描相关的设置（设计文档第 6.2、8 节）。
@@ -58,6 +61,22 @@ impl Default for ScanSettings {
             idle_timeout_secs: 300,
             auto_confirm: false,
             live_room: String::new(),
+        }
+    }
+}
+
+/// 检查更新的设置（设计文档第 6.6 节）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct UpdateSettings {
+    /// 打开程序时查一次新版本。默认开。
+    pub check_on_start: bool,
+}
+
+impl Default for UpdateSettings {
+    fn default() -> Self {
+        Self {
+            check_on_start: true,
         }
     }
 }
@@ -118,6 +137,7 @@ impl Settings {
             device_id: uuid::Uuid::new_v4().to_string(),
             active_account: None,
             scan: ScanSettings::default(),
+            update: UpdateSettings::default(),
         };
         settings.save(path)?;
         Ok(settings)
@@ -213,6 +233,31 @@ mod tests {
         .unwrap();
         let settings = Settings::load_or_init(&path).unwrap();
         assert_eq!(settings.scan, ScanSettings::default());
+    }
+
+    #[test]
+    fn files_before_v04_check_for_updates() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        fs::write(
+            &path,
+            r#"{"format":1,"device_id":"0b8f4a1e-1111-4222-8333-944445555666","scan":{"default_target":"live"}}"#,
+        )
+        .unwrap();
+        let settings = Settings::load_or_init(&path).unwrap();
+        assert!(settings.update.check_on_start);
+        assert_eq!(settings.scan.default_target, TargetKind::Live);
+    }
+
+    #[test]
+    fn update_settings_are_saved() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        let mut settings = Settings::load_or_init(&path).unwrap();
+        assert!(settings.update.check_on_start);
+        settings.update.check_on_start = false;
+        settings.save(&path).unwrap();
+        assert!(!Settings::load_or_init(&path).unwrap().update.check_on_start);
     }
 
     #[test]
