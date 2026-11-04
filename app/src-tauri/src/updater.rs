@@ -119,6 +119,9 @@ pub async fn install(app: AppHandle, version: Version) {
     if let Some(dir) = exe.parent() {
         let _ = mhy_carry_platform::install::record_version(dir, &label);
     }
+    // 先放开“只能开一个”的锁：新版本启动得比这个进程退出快，不放开的话它会以为已经有一个
+    // 在运行，切过来以后自己退出，更新完程序就没了（第 6.6 节“更新”第 6 步）。
+    tauri_plugin_single_instance::destroy(&app);
     match std::process::Command::new(&exe).spawn() {
         Ok(_) => app.exit(0),
         Err(_) => update(&app, |model| {

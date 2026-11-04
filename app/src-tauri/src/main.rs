@@ -14,6 +14,11 @@ use tauri::Manager;
 
 fn main() {
     let result = tauri::Builder::default()
+        // 只能开一个（设计文档第 6.3 节）：再打开一次时，把已经开着的窗口切到前面，新开的退出。
+        // 要放在最前面，新开的那个在读设置、建窗口之前就退出。
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            show_main_window(app)
+        }))
         .setup(|app| {
             app.manage(model::Shared::load()?);
             updater::on_start(app.handle());
@@ -43,6 +48,15 @@ fn main() {
     // 正式版没有控制台，启动失败（比如数据目录不可用、设置文件读写出错）时弹窗说明原因。
     if let Err(error) = result {
         mhy_carry_platform::dialog::alert(&format!("MhyCarry 启动失败：{error}"));
+    }
+}
+
+/// 把主窗口切到前面，最小化了就恢复。
+fn show_main_window(app: &tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
     }
 }
 
