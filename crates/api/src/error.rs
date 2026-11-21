@@ -45,9 +45,10 @@ fn describe_retcode(code: &i64, message: &str) -> String {
         retcode::TOKEN_INVALID => format!("登录状态已失效，请重新绑定账号（retcode={code}）"),
         retcode::QR_EXPIRED => format!("二维码已过期，请刷新后重试（retcode={code}）"),
         retcode::QR_CANCELLED => format!("已在手机上取消（retcode={code}）"),
+        // 服务器的消息一般自带句号，去掉，免得接上后面的句号变成“。。”。
         _ => format!(
             "服务器返回错误 retcode={code}：{}。接口可能已变更，请提 Issue",
-            printable(message)
+            printable(message).trim_end_matches(['。', '.'])
         ),
     }
 }
@@ -82,6 +83,17 @@ mod tests {
             "{text}"
         );
         assert_eq!(error.retcode(), Some(-9999));
+    }
+
+    #[test]
+    fn server_full_stop_is_not_doubled() {
+        let error = ApiError::Retcode {
+            code: -464,
+            message: "请使用最新版本产品/链接以获得更佳体验，或前往user.mihoyo.com完成操作。"
+                .to_owned(),
+        };
+        let text = error.to_string();
+        assert!(text.contains("完成操作。接口可能已变更"), "{text}");
     }
 
     #[test]
