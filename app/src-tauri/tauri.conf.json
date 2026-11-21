@@ -1,6 +1,6 @@
 {
   "productName": "MhyCarry",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "identifier": "io.github.shulkx.mhycarry",
   "build": {
     "frontendDist": "../ui"
