@@ -14,7 +14,12 @@ use crate::error::{ApiError, retcode};
 
 /// 米游社 App 的应用 ID。
 const BBS_APP_ID: &str = "bll8iq97cem8";
-const CHECK_STOKEN_PATH: &str = "/account/auth/api/getCookieAccountInfoBySToken";
+/// 用 stoken 换别的凭证。检查凭证用它（设计文档第 6.2 节）：原来的
+/// `getCookieAccountInfoBySToken` 从 2026-11-20 起对有效的 stoken 一律返回 -464。
+const EXCHANGE_PATH: &str = "/account/ma-cn-session/app/exchange";
+/// exchange 请求体里的凭证类型。
+const STOKEN_TYPE: u8 = 1;
+const COOKIE_TOKEN_TYPE: u8 = 4;
 const SCAN_PATH: &str = "/account/ma-cn-passport/app/scanQRLogin";
 const CONFIRM_PATH: &str = "/account/ma-cn-passport/app/confirmQRLogin";
 
@@ -91,23 +96,33 @@ impl ApiClient {
         Ok(headers)
     }
 
-    /// 检查 stoken 是否仍然有效（设计文档第 6.2 节），顺便取回 cookie_token：查原神角色要用它
+    /// 检查 stoken 是否仍然有效（设计文档第 6.2 节）：用它换一个 cookie_token，查原神角色要用
     /// （第 6.4 节）。cookie_token 也是凭证，只在内存里用。
     ///
-    /// 只要 retcode 为 0 就算检查通过。data 按任意 JSON 读：cookie_token 缺失或者类型变了，
-    /// 只是查不了角色，不能让凭证检查失败、扫描停下。
+    /// 接口要求 stoken 和 mid 放在请求体里，所以这个请求不带 Cookie。只要 retcode 为 0 就算
+    /// 检查通过。data 按任意 JSON 读，只取 `token.token`：cookie_token 缺失或者类型变了，只是
+    /// 查不了角色，不能让凭证检查失败、扫描停下。data 里的 `user_info` 有手机号、实名这类
+    /// 个人信息，不读。
     pub async fn check_stoken(
         &self,
         credentials: &Credentials<'_>,
     ) -> Result<Option<SecretString>, ApiError> {
-        let url = self.endpoints.passport(CHECK_STOKEN_PATH);
+        let url = self.endpoints.passport(EXCHANGE_PATH);
+        let body = json!({
+            "dst_token_type": COOKIE_TOKEN_TYPE,
+            "src_token": {
+                "token": credentials.stoken.expose_secret(),
+                "token_type": STOKEN_TYPE,
+            },
+            "mid": credentials.mid,
+        });
         let data: Option<serde_json::Value> = self
-            .get_json(url, self.bbs_headers(Some(credentials))?)
+            .post_json(url, self.bbs_headers(None)?, &body)
             .await?
             .into_optional_data()?;
         Ok(data
             .as_ref()
-            .and_then(|data| data.get("cookie_token"))
+            .and_then(|data| data.pointer("/token/token"))
             .and_then(serde_json::Value::as_str)
             .map(SecretString::from))
     }
@@ -327,19 +342,35 @@ mod tests {
         assert_eq!(error.retcode(), Some(crate::retcode::QR_EXPIRED));
     }
 
+    /// 用 stoken 换 cookie_token 的请求体。类型都是 JSON 整数。
+    fn exchange_body(stoken: &str) -> serde_json::Value {
+        json!({
+            "dst_token_type": 4,
+            "src_token": {"token": stoken, "token_type": 1},
+            "mid": "mid_abc",
+        })
+    }
+
     #[tokio::test]
     async fn check_stoken_accepts_valid_and_reports_invalid() {
         let server = MockServer::start().await;
-        Mock::given(method("GET"))
-            .and(path(CHECK_STOKEN_PATH))
-            .and(header("cookie", "stoken=good;mid=mid_abc"))
-            .respond_with(ok(json!({"cookie_token": "x"})))
+        Mock::given(method("POST"))
+            .and(path(EXCHANGE_PATH))
+            .and(header("x-rpc-app_id", "bll8iq97cem8"))
+            .and(header("x-rpc-device_id", "test-device"))
+            .and(body_json(exchange_body("good")))
+            .respond_with(ok(json!({
+                "token": {"token": "x", "token_type": 4},
+                "user_info": {"aid": "300012345", "mid": "mid_abc", "mobile": "138****0000"},
+            })))
+            .expect(1)
             .mount(&server)
             .await;
-        Mock::given(method("GET"))
-            .and(path(CHECK_STOKEN_PATH))
-            .and(header("cookie", "stoken=bad;mid=mid_abc"))
+        Mock::given(method("POST"))
+            .and(path(EXCHANGE_PATH))
+            .and(body_json(exchange_body("bad")))
             .respond_with(fail(crate::retcode::TOKEN_INVALID))
+            .expect(1)
             .mount(&server)
             .await;
         let client = ApiClient::for_tests(&server.uri());
@@ -364,13 +395,14 @@ mod tests {
     #[tokio::test]
     async fn check_stoken_without_a_usable_cookie_token_still_passes() {
         for data in [
-            json!({"uid": "300012345"}),
-            json!({"cookie_token": {"v": 2}}),
+            json!({"user_info": {"aid": "300012345"}}),
+            json!({"token": {"token": {"v": 2}, "token_type": 4}}),
+            json!({"token": "unexpected"}),
             json!("unexpected"),
         ] {
             let server = MockServer::start().await;
-            Mock::given(method("GET"))
-                .and(path(CHECK_STOKEN_PATH))
+            Mock::given(method("POST"))
+                .and(path(EXCHANGE_PATH))
                 .respond_with(ok(data.clone()))
                 .mount(&server)
                 .await;
@@ -398,13 +430,19 @@ mod tests {
             stoken: &stoken,
             mid: "mid_abc",
         };
-        let error = client
-            .passport_confirm(&passport_ticket(), &credentials)
-            .await
-            .unwrap_err();
-        let text = format!("{error} {error:?}");
-        assert!(matches!(error, ApiError::Network(_)), "{text}");
-        assert!(!text.contains("v2_secret_stoken"), "{text}");
+        // 确认登录把 stoken 放在 Cookie 里，检查凭证放在请求体里。
+        let errors = [
+            client
+                .passport_confirm(&passport_ticket(), &credentials)
+                .await
+                .unwrap_err(),
+            client.check_stoken(&credentials).await.unwrap_err(),
+        ];
+        for error in errors {
+            let text = format!("{error} {error:?}");
+            assert!(matches!(error, ApiError::Network(_)), "{text}");
+            assert!(!text.contains("v2_secret_stoken"), "{text}");
+        }
     }
 
     #[tokio::test]
