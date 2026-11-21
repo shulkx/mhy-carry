@@ -1,7 +1,7 @@
 # MhyCarry 设计文档（v1）
 
 - 日期：2026-10-11
-- 状态：已确认；同日按接口核对结果修订了第 6、9、10、14 节。2026-10-12 M1 已完成，实测结论写入第 3、9、14 节。2026-10-13 新增第 6.3 节“界面状态”，并相应修订第 5、6.2、9、11 节。2026-10-13 M2 已完成，实测结论写入第 14 节。2026-10-13 定下确认框做法和页面布局（第 3、6.2、6.3 节），uid 改为完整显示。2026-10-13 决定 v1 不写日志文件（第 3、8、9、11 节）。2026-10-14 数据目录改为 `%LOCALAPPDATA%\io.github.shulkx.mhycarry\`，安装包只为当前用户安装（第 4、8、12 节）。2026-10-14 M3 已完成，实测结论写入第 14 节。2026-10-14 M4 已完成，v0.1.0 已发布（第 14 节）。2026-10-14 定下 v0.2 多账号设计（第 2、6、8–11、13、14、16 节）。2026-10-14 M5 已完成，v0.2.0 已发布（第 14 节）。2026-10-15 定下 v0.3 直播间抢码设计（第 2、3、4、5、6.2、6.3、6.5、9、11、13、14、16 节）。2026-10-15 按 M6 审查结论修订第 6.2、6.5 节：连不上时退避重试，持续 1 分钟以上才停止；`room_init` 只有 60004 算房间不存在。2026-10-15 v0.3.0 已发布（第 14 节第 10 项），用户本人用直播间抢码的实测结果待补。2026-11-04 和用户确认加“确认直播间”：填好直播间后显示主播名、直播状态、分区和标题（第 6.3、6.5、9、11、16 节）。2026-11-04 v0.3.1 已发布（第 14 节第 11 项）。2026-11-04 和用户确认加检查更新和自动更新（第 2、4、6.3、6.6、8、9、11、12、13、16 节）。2026-11-04 和用户确认改成只能开一个（第 6.3、6.6 节）。2026-11-04 M7 已完成，v0.4.0 已发布，免安装版和安装版的自动更新都实测过（第 14 节第 12 项）
+- 状态：已确认；同日按接口核对结果修订了第 6、9、10、14 节。2026-10-12 M1 已完成，实测结论写入第 3、9、14 节。2026-10-13 新增第 6.3 节“界面状态”，并相应修订第 5、6.2、9、11 节。2026-10-13 M2 已完成，实测结论写入第 14 节。2026-10-13 定下确认框做法和页面布局（第 3、6.2、6.3 节），uid 改为完整显示。2026-10-13 决定 v1 不写日志文件（第 3、8、9、11 节）。2026-10-14 数据目录改为 `%LOCALAPPDATA%\io.github.shulkx.mhycarry\`，安装包只为当前用户安装（第 4、8、12 节）。2026-10-14 M3 已完成，实测结论写入第 14 节。2026-10-14 M4 已完成，v0.1.0 已发布（第 14 节）。2026-10-14 定下 v0.2 多账号设计（第 2、6、8–11、13、14、16 节）。2026-10-14 M5 已完成，v0.2.0 已发布（第 14 节）。2026-10-15 定下 v0.3 直播间抢码设计（第 2、3、4、5、6.2、6.3、6.5、9、11、13、14、16 节）。2026-10-15 按 M6 审查结论修订第 6.2、6.5 节：连不上时退避重试，持续 1 分钟以上才停止；`room_init` 只有 60004 算房间不存在。2026-10-15 v0.3.0 已发布（第 14 节第 10 项），用户本人用直播间抢码的实测结果待补。2026-11-04 和用户确认加“确认直播间”：填好直播间后显示主播名、直播状态、分区和标题（第 6.3、6.5、9、11、16 节）。2026-11-04 v0.3.1 已发布（第 14 节第 11 项）。2026-11-04 和用户确认加检查更新和自动更新（第 2、4、6.3、6.6、8、9、11、12、13、16 节）。2026-11-04 和用户确认改成只能开一个（第 6.3、6.6 节）。2026-11-04 M7 已完成，v0.4.0 已发布，免安装版和安装版的自动更新都实测过（第 14 节第 12 项）。2026-11-22 检查凭证改用 exchange 接口：米哈游 2026-11-20 停用了原来的 `getCookieAccountInfoBySToken`（第 6.2、6.4、9、14、16 节）
 - v1 范围：Windows，原神国服官服，一个账号
 
 ## 1. 背景与目标
@@ -216,7 +216,8 @@ MHY_Scanner 公开源码里的旧方案（panda `fetch`/`query`，再调 `getTok
 8. **超时停止**：连续一段时间没发现合法的登录二维码就自动停止扫描，默认 300 秒，可以在设置里改。从开始扫描或画面里上一次出现新的合法登录码时算起，一直留在画面上的旧码不算；等窗口、暂停的时间也算在内。直播间模式不按这个超时停止（第 6.5 节）。
 
 另外：
-- **会话开始时先检查凭证。** 扫描开始前先调 `GET https://passport-api.mihoyo.com/account/auth/api/getCookieAccountInfoBySToken`（Cookie 认证），凭证失效就立刻提示重新绑定，免得扫到码才发现用不了。v0.2 起顺便刷新这个账号的原神角色（第 6.4 节）。
+- **会话开始时先检查凭证。** 扫描开始前先用 stoken 换一个 cookie_token：`POST https://passport-api.mihoyo.com/account/ma-cn-session/app/exchange`，请求体 `{"dst_token_type": 4, "src_token": {"token": <stoken>, "token_type": 1}, "mid": <mid>}`，两个 `token_type` 都是 JSON 整数。请求头只有第 6 步的 `x-rpc-app_id` 和 `x-rpc-device_id`，不带 Cookie，不带 DS。`retcode == 0` 就算凭证有效；`-100` 是凭证失效，立刻提示重新绑定，免得扫到码才发现用不了。v0.2 起顺便刷新这个账号的原神角色（第 6.4 节）。
+  - 2026-11-20 以前用的是 `GET .../account/auth/api/getCookieAccountInfoBySToken`（Cookie 认证）。那天米哈游换了一套凭证接口，这个接口对有效的 stoken 一律返回 `-464`“请使用最新版本产品/链接以获得更佳体验”，加版本号请求头、DS 签名都没用；各活跃项目都改用了 exchange（第 14 节第 13 项、第 16 节）。
 - **旧流程已经不能用。** MHY_Scanner 公开源码里“换 game_token 后调 panda `confirm`”的做法，2026 年起已被各活跃项目弃用。
 - **自动确认时不弹窗**（v0.3）。设置里的“自动确认”开着时，识别到合法的登录码立刻 scan + confirm，因为要抢在别人前面。这个顺序由 `ConfirmPolicy` 和 `ScanSession` 决定，运行循环本身不用改。
 
@@ -319,7 +320,7 @@ Rust 端维护一份完整的界面状态（`AppState`），分账号、绑定�
 **原神角色**
 - 程序里的 uid 是**米哈游通行证 ID**，不是原神里的 UID。为了让账号好认，v0.2 用凭证查这个通行证下的原神角色，拿到昵称、等级和游戏 UID。
 - 两步请求，都在白名单里已有的 `passport-api.mihoyo.com` 上，都不需要 DS 签名：
-  1. `GET /account/auth/api/getCookieAccountInfoBySToken`：就是检查凭证用的接口，Cookie `stoken=…;mid=…`。返回的 `data.cookie_token` 留给第 2 步用。
+  1. `POST /account/ma-cn-session/app/exchange`：就是检查凭证用的接口（第 6.2 节）。返回的 `data.token.token` 就是 cookie_token，留给第 2 步用。返回里的 `data.user_info` 有打码的手机号、邮箱、实名和身份证号，程序不读。2026-11-20 以前这一步用的是 `getCookieAccountInfoBySToken`，取它返回的 `data.cookie_token`。
   2. `GET /binding/api/getUserGameRolesByCookieToken?game_biz=hk4e_cn`，Cookie `account_id=<通行证 ID>; cookie_token=<第 1 步的值>`。返回 `data.list`，每一项有 `game_biz`、`region`、`game_uid`、`nickname`、`level`。
 - 只取官服（`region == "cn_gf01"`）的角色；同一个通行证在官服有多个角色时，取等级最高的。
 - **什么时候查**：绑定成功后查一次；每次开始扫描、检查凭证时顺便刷新。结果存进账号文件（第 8 节），这些不是凭证。
@@ -636,7 +637,7 @@ v1 不写日志文件：出错原因和错误码直接显示在界面上和命�
 
 ### 日志和错误信息
 - stoken 用 `secrecy::SecretString` 包装，打印时显示成 `[REDACTED]`。
-- stoken 只放在 Cookie 请求头里，不放进 URL；这个请求头标记为敏感（`HeaderValue::set_sensitive`），调试输出里不会显示。
+- stoken 只放在 Cookie 请求头和检查凭证的请求体里，不放进 URL。exchange 接口要求 stoken 放在请求体里（第 6.2 节，2026-11-22 起）。Cookie 请求头标记为敏感（`HeaderValue::set_sensitive`），调试输出里不会显示；请求体不打印，错误信息里也没有，有测试检查。
 - reqwest 的错误信息会带上完整 URL，所以错误一律先用 `reqwest::Error::without_url()` 去掉 URL。
 - 有测试专门检查：错误信息和调试输出里不会出现 token 原文。
 - v1 不写日志文件（第 8 节）。以后加日志时，同样不能出现 token、ticket 和二维码内容。
@@ -774,7 +775,7 @@ v1 不写日志文件：出错原因和错误码直接显示在界面上和命�
    - **panda 扫码的域名：** `api-sdk.mihoyo.com` 可用。备选的 `hk4e-sdk.mihoyo.com` 不需要。
    - **DS 签名：** 不需要。`scanQRLogin`、`confirmQRLogin` 不带 DS 也成功了，所以计划里的 DS2 签名（任务 19）没有做。
    - **原神的 passport 应用 ID：** `scanQRLogin` 对 PC 客户端二维码返回的 `data.app_id` 是 `c76ync6mutq8`。程序在确认登录前会核对这个值，不一致就取消登录；这次核对通过了。
-   - **检查凭证的接口：** `getCookieAccountInfoBySToken` 在 `passport-api` 域名下可用。
+   - **检查凭证的接口：** `getCookieAccountInfoBySToken` 在 `passport-api` 域名下可用。2026-11-20 起不能用了，改用 exchange（第 13 项）。
    - **绑定：** HoYoPlay 那套请求头可用。备选的 `x-rpc-app_id: dw9y09jqjpxc` 不需要。
 2. **截图后端选 GDI 还是 Windows.Graphics.Capture（WGC，都用 xcap）。** 合格标准是：
    - 本程序以普通权限运行，能截到以管理员权限运行的原神窗口的真实画面，不是黑屏；
@@ -829,7 +830,7 @@ v1 不写日志文件：出错原因和错误码直接显示在界面上和命�
    - 发布前做过三件事：本机打包；手动试跑 `release.yml`；独立审查。审查后按建议把构建来源证明拆成单独的 job，并给构建加了 `--locked`。
    - 在非交互的命令行里，`gh attestation verify` 不输出文字，只看退出码；加 `--format json` 可以看到证明内容。
 
-7. **查原神角色的 Cookie 写法（v0.2，2026-10-14 实测）。** 第 6.4 节第 2 步用 `account_id=<通行证 ID>; cookie_token=…`，Cookie 里的 `cookie_token` 来自第 1 步 `getCookieAccountInfoBySToken` 的返回。用户本人用 `cli account --refresh` 实测：凭证有效，查到的原神官服角色（昵称、等级、UID）正确。不需要 DS 签名。
+7. **查原神角色的 Cookie 写法（v0.2，2026-10-14 实测）。** 第 6.4 节第 2 步用 `account_id=<通行证 ID>; cookie_token=…`，Cookie 里的 `cookie_token` 来自第 1 步 `getCookieAccountInfoBySToken` 的返回。用户本人用 `cli account --refresh` 实测：凭证有效，查到的原神官服角色（昵称、等级、UID）正确。不需要 DS 签名。2026-11-22 起 cookie_token 改从 exchange 换来，同样的 Cookie 写法照常可用（第 13 项）。
 8. **M5 实测（v0.2，2026-10-14）**：由用户本人用真实账号操作，环境和第 4 项相同。
    - `cli account --refresh`：凭证有效，原神角色正确（第 7 项）。
    - 应用：
@@ -887,6 +888,19 @@ v1 不写日志文件：出错原因和错误码直接显示在界面上和命�
      - 两次都只剩一个进程：重启前放开“只能开一个”的锁这一步有效。
      - 程序自己下载的文件没有“来自网络”的标记，重启时没有出现 SmartScreen 提示。
    - 没有实测：真实网络下的取消下载和各种失败路径，这些只有单元测试和远程调试检查。
+13. **检查凭证改用 exchange（2026-11-22）**：用户报告从 2026-11-21 起一开始扫描就停下：“检查账号凭证时出错：服务器返回错误 retcode=-464：请使用最新版本产品/链接以获得更佳体验，或前往user.mihoyo.com完成操作。”用户同意用自己的账号联网核对，于是在本机用脚本测。脚本从账号文件读凭证，只输出 retcode、message 和字段名，凭证没有进入对话。
+   - 原来的 `GET getCookieAccountInfoBySToken`：
+     - 有效的 stoken 一律返回 `-464`；
+     - 加上 `x-rpc-app_version: 2.119.0`、`x-rpc-client_type: 2`，再加 X4 盐或 passport 盐的 DS，还是 `-464`；
+     - 乱写的 stoken 返回 `-100`，可见服务器先验凭证，再拒绝这个旧接口。
+   - `POST /account/ma-cn-session/app/exchange`（`dst_token_type: 4`）：
+     - 只带 `x-rpc-app_id: bll8iq97cem8` 和 `x-rpc-device_id` 就返回 0；`data.token.token_type` 是 4，`data.user_info.aid` 和绑定的通行证 ID 一致；
+     - 带一个算错的 DS 也返回 0，说明它不验 DS。所以程序不带 DS，免得以后盐变了反而出错；
+     - stoken 乱写或者 mid 不对，都返回 `-100`“登录状态失效，请重新登录”，和原来凭证失效的错误码一样。
+   - 换来的 cookie_token 查原神角色（第 6.4 节第 2 步）：原来的 Cookie 写法可用；换成 v2 的 Cookie 名（`account_id_v2`、`account_mid_v2`、`cookie_token_v2`）也可用。
+   - 扫码登录的前两步没受影响：用 panda `fetch`（`api-sdk.mihoyo.com/hk4e_cn/combo/panda/qrcode/fetch`，只在测试脚本里用）给一个随机的假设备生成原神登录码，panda 扫码和 `scanQRLogin` 都返回 0，`app_id` 是 `c76ync6mutq8`。没有调确认，这个码就过期作废了。绑定用的 `createQRLogin` 也照常。
+   - 改好后 `cli account --refresh`：凭证有效，原神角色正确。
+   - 用户本人实测（2026-11-22）：用改好的版本扫原神的登录码，登录成功。
 
 ## 15. 许可证与声明
 
@@ -904,6 +918,10 @@ v1 不写日志文件：出错原因和错误码直接显示在界面上和命�
 
 | 项目 | 参考了什么 |
 |---|---|
+| SnapHutaoRemasteringProject/Snap.Hutao.Remastered（2026-11-21，相关提交 2026-11-20） | 2026-11-22 核对：检查凭证改用的 `ma-cn-session/app/exchange`，请求体和返回结构（`token`、`user_info.aid`），第 6.2 节。它带 passport 盐的 DS 和一整套请求头，实测都不需要（第 14 节第 13 项） |
+| PaiGramTeam/SIMNet（2026-11-21） | 2026-11-22 核对：同一个 exchange 接口，只带 `x-rpc-app_id: bll8iq97cem8` |
+| Womsxd/MihoyoBBSTools（2026-11-21） | 2026-11-22 核对：同一个 exchange 接口；issue #288 记录了 2026-11-20 的接口变化 |
+| Marchen-orz/MiyoQian（2026-11-21） | 2026-11-22 核对：issue #34 报告 2026-11-20 起 `getCookieAccountInfoBySToken` 返回 `-464`，它的修复也改用 exchange |
 | SnapHutaoRemasteringProject/Snap.Hutao.Remastered（2026-10-11） | 绑定（HoYoPlay passport 扫码）、错误码；2026-10-14 核对过它查原神角色的做法（`getUserGameRolesByStoken`，要 DS 签名，第 6.4 节没用） |
 | streamlink/streamlink（2026-10-11，B 站插件 2026-02-14） | 2026-10-15 核对：B 站 `room/v1/Room/playUrl`、`getRoomPlayInfo` 的参数，不需要签名（第 6.5 节） |
 | loqwe/MHY_Scanner2（2026-10-13）、yss161/MHY_Scanner（2026-10-13） | 2026-10-15 核对：直播抢码选 FLV，`room_init` 换真实房间号，`getRoomPlayInfo` 用 `codec=0`、`qn=10000`；FFmpeg 不缓冲的追帧参数。都是 GPL 项目，只参考做法和接口参数，没有复制代码 |
