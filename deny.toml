@@ -14,6 +14,9 @@ ignore = [
     { id = "RUSTSEC-2026-0370", reason = "zvariant：只在 Linux 上由 xcap 引入，v1 只发布 Windows 版" },
     { id = "RUSTSEC-2026-0371", reason = "zbus_names：只在 Linux 上由 xcap 引入，v1 只发布 Windows 版" },
     { id = "RUSTSEC-2026-0372", reason = "zvariant_derive：只在 Linux 上由 xcap 引入，v1 只发布 Windows 版" },
+    # chrono 不再维护（不是漏洞），没有可以升级的版本。只由二维码识别库 rxing 引入，是它的必需依赖，
+    # 只用来给识别结果记当前时间，程序不用这个时间。rxing 0.9.3 已经是最新版，等它换掉 chrono。
+    { id = "RUSTSEC-2026-0543", reason = "chrono 不再维护：只由 rxing 引入，用来记识别时间；rxing 0.9.3 已是最新版" },
 ]
 
 [licenses]
